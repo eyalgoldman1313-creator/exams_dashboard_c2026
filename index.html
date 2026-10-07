@@ -31,31 +31,9 @@
       </button>
     </header>
 
-    <section class="hero" id="hero" aria-live="polite"></section>
+    <nav class="board-tabs"><div class="tabs-track" id="tabs" role="tablist" aria-label="מועדים"></div></nav>
 
-    <section class="stats" id="stats"></section>
-
-    <section class="panel timeline-panel">
-      <div class="panel-head">
-        <h2>ציר זמן</h2>
-        <div class="legend-hint"><span class="lg-dot"></span>מועד א׳ <span class="lg-dot hollow"></span>מועד ב׳</div>
-      </div>
-      <div class="timeline" id="timeline"></div>
-    </section>
-
-    <section class="controls">
-      <div class="seg" role="tablist" aria-label="תצוגה">
-        <button type="button" data-view="chrono" role="tab">לפי תאריך</button>
-        <button type="button" data-view="course" role="tab">לפי קורס</button>
-      </div>
-      <div class="seg" role="tablist" aria-label="סינון מועד">
-        <button type="button" data-moed="all" role="tab">הכל</button>
-        <button type="button" data-moed="א" role="tab">מועד א׳</button>
-        <button type="button" data-moed="ב" role="tab">מועד ב׳</button>
-      </div>
-    </section>
-
-    <section id="list" class="list"></section>
+    <div class="boards" id="boards" aria-live="polite"></div>
 
     <footer class="foot">
       הספירה כוללת את היום ואינה כוללת את יום המבחן · מתעדכן אוטומטית בחצות (שעון ישראל)

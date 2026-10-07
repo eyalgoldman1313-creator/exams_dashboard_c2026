@@ -23,6 +23,11 @@ const EXAMS = [
   { course: 'auditBasics', moed: 'ב', date: '2027-02-04', time: '09:00' },
 ].map((e, i) => ({ ...e, id: `exam-${i}`, ...COURSES[e.course] }));
 
+const MOEDS = [
+  { key: 'a', moed: 'א', title: 'מועדי א׳' },
+  { key: 'b', moed: 'ב', title: 'מועדי ב׳' },
+];
+
 // ---------- Date helpers (all in Israel time, day granularity) ----------
 const DAY = 86400000;
 const toUTC = (iso) => { const [y, m, d] = iso.split('-').map(Number); return Date.UTC(y, m - 1, d); };
@@ -33,6 +38,7 @@ const daysUntil = (iso, today) => Math.round((toUTC(iso) - toUTC(today)) / DAY);
 const fmt = (opts) => new Intl.DateTimeFormat('he-IL', { timeZone: 'UTC', ...opts });
 const fmtLong = fmt({ weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const fmtDate = fmt({ day: 'numeric', month: 'long' });
+const fmtShortDate = fmt({ day: 'numeric', month: 'short' });
 const fmtWeekday = fmt({ weekday: 'long' });
 const fmtShortMonth = fmt({ month: 'short' });
 
@@ -57,14 +63,9 @@ const unit = (d) => (d === 1 ? 'יום' : 'ימים');
 const moedLabel = (m) => `מועד ${m}׳`;
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-// ---------- State ----------
 const store = {
   get(k, def) { try { return localStorage.getItem(k) ?? def; } catch { return def; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
-};
-const state = {
-  view: store.get('view', 'chrono'),
-  moed: store.get('moed', 'all'),
 };
 
 // ---------- Rendering ----------
@@ -74,85 +75,88 @@ function countBlock(d) {
   return `<span class="num">${d}</span><span class="unit">${unit(d)}</span>`;
 }
 
-function renderHero(exams, today) {
-  const hero = document.getElementById('hero');
+function heroHTML(m, exams) {
   const next = exams.find((e) => e.d >= 0);
   if (!next) {
-    hero.style.removeProperty('--c');
-    hero.innerHTML = `<div class="hero-info"><p class="hero-kicker">סיימת את כל המבחנים</p><h2>🎉 כל הכבוד! 🎉</h2></div>`;
-    return;
+    return `
+      <section class="hero done">
+        <div class="hero-info">
+          <p class="hero-kicker">${m.title}</p>
+          <h2>סיימת את כל ${m.title} 🎉</h2>
+          <p class="hero-sub">כל הכבוד!</p>
+        </div>
+      </section>`;
   }
   const st = status(next.d);
-  hero.style.setProperty('--c', next.color);
-  hero.innerHTML = `
-    <div class="hero-info">
-      <p class="hero-kicker">המבחן הבא</p>
-      <h2>${esc(next.name)}</h2>
-      <p class="hero-meta">
-        <span class="pill">${moedLabel(next.moed)}</span>
-        <span>${fmtWeekday.format(toUTC(next.date))}, ${fmtDate.format(toUTC(next.date))}</span>
-        <span class="sep">·</span><span>${next.time}</span>
-      </p>
-      <p class="hero-sub">${st.label || weeksText(next.d)}</p>
-    </div>
-    <div class="hero-count">${countBlock(next.d)}</div>`;
+  const kicker = next === exams[0] && next.d > 0 ? `המבחן הראשון ב${m.title}` : `המבחן הבא ב${m.title}`;
+  return `
+    <section class="hero" style="--c:${next.color}">
+      <div class="hero-info">
+        <p class="hero-kicker">${kicker}</p>
+        <h2>${esc(next.name)}</h2>
+        <p class="hero-meta">
+          <span class="pill">${moedLabel(next.moed)}</span>
+          <span>${fmtWeekday.format(toUTC(next.date))}, ${fmtDate.format(toUTC(next.date))}</span>
+          <span class="sep">·</span><span>${next.time}</span>
+        </p>
+        <p class="hero-sub">${st.label || weeksText(next.d)}</p>
+      </div>
+      <div class="hero-count">${countBlock(next.d)}</div>
+    </section>`;
 }
 
-function renderStats(exams, today) {
-  const left = exams.filter((e) => e.d >= 0);
-  const lastA = exams.filter((e) => e.moed === 'א').at(-1);
-  const lastAll = exams.at(-1);
-  const dA = daysUntil(lastA.date, today);
-  const dAll = daysUntil(lastAll.date, today);
-  const done = exams.length - left.length;
-  const pct = Math.round((done / exams.length) * 100);
-  document.getElementById('stats').innerHTML = `
+function statsHTML(exams) {
+  const left = exams.filter((e) => e.d >= 0).length;
+  const pct = Math.round(((exams.length - left) / exams.length) * 100);
+  const stat = (label, e) => `
     <div class="stat">
-      <span class="stat-label">מבחנים שנותרו</span>
-      <span class="stat-val">${left.length}<small> / ${exams.length}</small></span>
-      <span class="progress" style="--p:${pct}%"><i></i></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">עד סוף מועדי א׳</span>
-      <span class="stat-val">${dA >= 0 ? dA : '✓'}<small> ${dA >= 0 ? unit(dA) : ''}</small></span>
-      <span class="stat-foot">${fmtDate.format(toUTC(lastA.date))}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">עד סוף התקופה</span>
-      <span class="stat-val">${dAll >= 0 ? dAll : '✓'}<small> ${dAll >= 0 ? unit(dAll) : ''}</small></span>
-      <span class="stat-foot">${fmtDate.format(toUTC(lastAll.date))}</span>
+      <span class="stat-label">${label}</span>
+      <span class="stat-val">${e.d >= 0 ? e.d : '✓'}<small> ${e.d >= 0 ? unit(e.d) : ''}</small></span>
+      <span class="stat-foot">${fmtDate.format(toUTC(e.date))}</span>
     </div>`;
+  return `
+    <section class="stats">
+      <div class="stat">
+        <span class="stat-label">מבחנים שנותרו</span>
+        <span class="stat-val">${left}<small> / ${exams.length}</small></span>
+        <span class="progress" style="--p:${pct}%"><i></i></span>
+      </div>
+      ${stat('עד הראשון', exams[0])}
+      ${stat('עד האחרון', exams.at(-1))}
+    </section>`;
 }
 
-function renderTimeline(exams, today) {
-  const el = document.getElementById('timeline');
-  const first = Math.min(toUTC(today), toUTC(exams[0].date));
-  const start = first - 4 * DAY;
+function timelineHTML(m, exams, today) {
+  const t = toUTC(today);
+  const start = Math.min(t, toUTC(exams[0].date)) - 4 * DAY;
   const end = toUTC(exams.at(-1).date) + 4 * DAY;
-  const pct = (t) => ((t - start) / (end - start)) * 100;
+  const pct = (x) => ((x - start) / (end - start)) * 100;
 
   let months = '';
   const s = new Date(start);
-  for (let m = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 1)); m.getTime() < end; m.setUTCMonth(m.getUTCMonth() + 1)) {
-    months += `<span class="tick" style="inset-inline-start:${pct(m.getTime())}%"><b>${fmtShortMonth.format(m)}</b></span>`;
+  for (let mo = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 1)); mo.getTime() < end; mo.setUTCMonth(mo.getUTCMonth() + 1)) {
+    months += `<span class="tick" style="inset-inline-start:${pct(mo.getTime())}%"><b>${fmtShortMonth.format(mo)}</b></span>`;
   }
-
-  const t = toUTC(today);
-  const progress = Math.max(0, Math.min(100, pct(t)));
-  const visible = exams.filter((e) => state.moed === 'all' || e.moed === state.moed);
-  const dots = visible.map((e, i) => `
-    <button type="button" class="tl-dot ${e.moed === 'ב' ? 'hollow' : ''} ${e.d < 0 ? 'past' : ''} ${i % 2 ? 'down' : 'up'}"
+  const todayMark = t <= end ? `<span class="tl-today" style="inset-inline-start:${pct(t)}%"><b>היום</b></span>` : '';
+  const dots = exams.map((e, i) => `
+    <button type="button" class="tl-dot ${e.d < 0 ? 'past' : ''} ${i % 2 ? 'down' : 'up'}"
       style="inset-inline-start:${pct(toUTC(e.date))}%; --c:${e.color}"
-      data-target="${e.id}" title="${esc(e.name)} · ${moedLabel(e.moed)} · ${fmtDate.format(toUTC(e.date))}"
-      aria-label="${esc(e.name)}, ${moedLabel(e.moed)}, ${e.d >= 0 ? `בעוד ${e.d} ${unit(e.d)}` : 'הסתיים'}">
+      data-target="${e.id}" title="${esc(e.name)} · ${fmtDate.format(toUTC(e.date))}"
+      aria-label="${esc(e.name)}, ${e.d >= 0 ? `בעוד ${e.d} ${unit(e.d)}` : 'הסתיים'}">
       <span class="tl-label">${e.d > 0 ? e.d : e.d === 0 ? '!' : '✓'}</span>
     </button>`).join('');
 
-  el.innerHTML = `
-    <div class="tl-track"><span class="tl-fill" style="width:${progress}%"></span></div>
-    ${months}
-    <span class="tl-today" style="inset-inline-start:${pct(t)}%"><b>היום</b></span>
-    ${dots}`;
+  return `
+    <section class="panel">
+      <div class="panel-head">
+        <h2>ציר זמן · ${m.title}</h2>
+        <span class="panel-note">${fmtShortDate.format(toUTC(exams[0].date))} – ${fmtShortDate.format(toUTC(exams.at(-1).date))}</span>
+      </div>
+      <div class="timeline">
+        <div class="tl-track"><span class="tl-fill" style="width:${Math.max(0, Math.min(100, pct(t)))}%"></span></div>
+        ${months}${todayMark}${dots}
+      </div>
+    </section>`;
 }
 
 function card(e) {
@@ -170,85 +174,133 @@ function card(e) {
         <div><dt>תאריך</dt><dd>${fmtWeekday.format(toUTC(e.date))}, ${fmtDate.format(toUTC(e.date))}</dd></div>
         <div><dt>שעה</dt><dd>${e.time}</dd></div>
         <div><dt>מרצה</dt><dd>${esc(e.lecturer)}</dd></div>
+        <div><dt>ימי הפרש מהמבחן הקודם</dt><dd>${e.gap ?? '—'}</dd></div>
       </dl>
     </article>`;
 }
 
-function mini(e) {
-  const st = status(e.d);
+function boardHTML(m, exams, today) {
+  const upcoming = exams.filter((e) => e.d >= 0);
+  const past = exams.filter((e) => e.d < 0);
   return `
-    <div class="mini ${st.cls}" id="${e.id}">
-      <span class="pill">${moedLabel(e.moed)}</span>
-      <div class="count">${countBlock(e.d)}</div>
-      <p class="mini-date">${fmtWeekday.format(toUTC(e.date))}, ${fmtDate.format(toUTC(e.date))}<br>בשעה ${e.time}</p>
-      ${st.label ? `<span class="flag">${st.label}</span>` : ''}
-    </div>`;
+    <section class="board" id="board-${m.key}" role="tabpanel" aria-labelledby="tab-${m.key}">
+      ${heroHTML(m, exams)}
+      ${statsHTML(exams)}
+      ${timelineHTML(m, exams, today)}
+      <h2 class="section-title">כל המבחנים · ${m.title}</h2>
+      <div class="grid">${upcoming.map(card).join('')}${past.map(card).join('')}</div>
+    </section>`;
 }
 
-function renderList(exams) {
-  const list = document.getElementById('list');
-  const visible = exams.filter((e) => state.moed === 'all' || e.moed === state.moed);
-
-  if (state.view === 'course') {
-    list.className = 'list by-course';
-    list.innerHTML = Object.entries(COURSES).map(([key, c]) => {
-      const items = visible.filter((e) => e.course === key);
-      if (!items.length) return '';
-      return `
-        <article class="course" style="--c:${c.color}">
-          <header class="course-head">
-            <span class="swatch"></span>
-            <div><h3>${esc(c.name)}</h3><p>${esc(c.lecturer)}</p></div>
-          </header>
-          <div class="minis">${items.map(mini).join('')}</div>
-        </article>`;
-    }).join('');
-    return;
-  }
-
-  // Chronological: upcoming first, finished exams at the end
-  const upcoming = visible.filter((e) => e.d >= 0);
-  const past = visible.filter((e) => e.d < 0);
-  list.className = 'list grid';
-  list.innerHTML = upcoming.map(card).join('') + past.map(card).join('');
+function tabsHTML(byMoed) {
+  return MOEDS.map((m) => {
+    const ex = byMoed[m.key];
+    const left = ex.filter((e) => e.d >= 0).length;
+    const range = `${fmtShortDate.format(toUTC(ex[0].date))} – ${fmtShortDate.format(toUTC(ex.at(-1).date))}`;
+    return `
+      <button type="button" class="board-tab" id="tab-${m.key}" data-tab="${m.key}" role="tab" aria-controls="board-${m.key}">
+        <span class="tab-title">${m.title}</span>
+        <span class="tab-meta">${range} · ${left ? `נותרו ${left}` : 'הסתיים ✓'}</span>
+      </button>`;
+  }).join('');
 }
 
-function syncControls() {
-  document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === state.view)));
-  document.querySelectorAll('[data-moed]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.moed === state.moed)));
+// ---------- Board switching (tabs + swipe) ----------
+const boardsEl = document.getElementById('boards');
+const tabsEl = document.getElementById('tabs');
+let active = null;
+
+function markActive(key) {
+  active = key;
+  tabsEl.dataset.active = key;
+  tabsEl.querySelectorAll('[data-tab]').forEach((b) => {
+    const on = b.dataset.tab === key;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+  });
+  if (location.hash !== `#moed-${key}`) history.replaceState(null, '', `#moed-${key}`);
 }
 
+function showBoard(key, smooth = true) {
+  const i = MOEDS.findIndex((m) => m.key === key);
+  if (i < 0) return;
+  markActive(key);
+  // RTL scroll: 0 at the first (rightmost) board, negative toward the next ones
+  const step = boardsEl.clientWidth + (parseFloat(getComputedStyle(boardsEl).columnGap) || 0);
+  boardsEl.scrollTo({ left: -i * step, behavior: smooth ? 'smooth' : 'auto' });
+  const tabsTop = tabsEl.getBoundingClientRect().top + scrollY - 8;
+  if (smooth && scrollY > tabsTop) scrollTo({ top: tabsTop, behavior: 'smooth' });
+}
+
+// Keep the tabs in sync when the user swipes between boards
+let scrollTimer;
+boardsEl.addEventListener('scroll', () => {
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    const i = Math.round(Math.abs(boardsEl.scrollLeft) / boardsEl.clientWidth);
+    const key = MOEDS[Math.min(i, MOEDS.length - 1)].key;
+    if (key !== active) markActive(key);
+  }, 80);
+}, { passive: true });
+// Re-align only on width changes (mobile address-bar show/hide fires height-only resizes)
+let lastWidth = innerWidth;
+addEventListener('resize', () => {
+  if (innerWidth === lastWidth || !active) return;
+  lastWidth = innerWidth;
+  showBoard(active, false);
+});
+
+// ---------- Main render ----------
 let lastDay = '';
 function render(force = false) {
   const today = todayISO();
   if (!force && today === lastDay) return;
   lastDay = today;
-  const exams = EXAMS.map((e) => ({ ...e, d: daysUntil(e.date, today) }));
+
+  const exams = EXAMS.map((e, i, all) => ({
+    ...e,
+    d: daysUntil(e.date, today),
+    // Study days between the previous exam and this one (same as "ימי הפרש" in the sheet)
+    gap: i ? daysUntil(e.date, all[i - 1].date) - 1 : null,
+  }));
+  const byMoed = Object.fromEntries(MOEDS.map((m) => [m.key, exams.filter((e) => e.moed === m.moed)]));
+
   document.getElementById('today').textContent = `היום: ${fmtLong.format(toUTC(today))}`;
-  renderHero(exams, today);
-  renderStats(exams, today);
-  renderTimeline(exams, today);
-  renderList(exams);
-  syncControls();
+  tabsEl.innerHTML = tabsHTML(byMoed);
+  boardsEl.innerHTML = MOEDS.map((m) => boardHTML(m, byMoed[m.key], today)).join('');
+
+  if (!active) {
+    const fromHash = location.hash.replace('#moed-', '');
+    // Default: the first moed that still has exams ahead
+    const auto = MOEDS.find((m) => byMoed[m.key].some((e) => e.d >= 0)) ?? MOEDS.at(-1);
+    active = MOEDS.some((m) => m.key === fromHash) ? fromHash : auto.key;
+  }
+  showBoard(active, false);
 }
 
 // ---------- Events ----------
 document.addEventListener('click', (ev) => {
-  const v = ev.target.closest('[data-view]');
-  const m = ev.target.closest('[data-moed]');
+  const tab = ev.target.closest('[data-tab]');
   const dot = ev.target.closest('.tl-dot');
-  if (v) { state.view = v.dataset.view; store.set('view', state.view); render(true); }
-  if (m) { state.moed = m.dataset.moed; store.set('moed', state.moed); render(true); }
+  if (tab) showBoard(tab.dataset.tab);
   if (dot) {
     const target = document.getElementById(dot.dataset.target);
     if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
       target.classList.remove('flash');
       void target.offsetWidth;
       target.classList.add('flash');
     }
   }
 });
+tabsEl.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+  const i = MOEDS.findIndex((m) => m.key === active);
+  const next = MOEDS[(i + (ev.key === 'ArrowLeft' ? 1 : -1) + MOEDS.length) % MOEDS.length];
+  showBoard(next.key);
+  document.getElementById(`tab-${next.key}`).focus();
+});
+addEventListener('hashchange', () => showBoard(location.hash.replace('#moed-', '')));
 
 // Theme toggle: follows system unless the user picked one
 const root = document.documentElement;
