@@ -57,6 +57,7 @@ body {
   transition: background-color 0.3s, color 0.3s;
 }
 button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
 h1, h2, h3, p, dl, dd { margin: 0; }
 
 .bg-blobs { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
@@ -279,20 +280,38 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .flash { animation: flash 1.2s ease; }
 @keyframes flash { 0%, 100% { box-shadow: var(--shadow); } 30% { box-shadow: 0 0 0 4px var(--c), 0 18px 40px -12px var(--c); } }
 
-/* ---------- Pomodoro ("זמן ללמוד") ---------- */
-/* --pc = colour of the selected exam; used only as a light accent */
-.pomo { --pc: #7c5cff; display: flex; flex-direction: column; gap: 18px; padding-bottom: 18px; scroll-margin-top: 100px; }
-.pomo-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.pomo-gear { width: 40px; height: 40px; border-radius: 12px; }
+/* ---------- Header actions ---------- */
+.top-actions { display: flex; gap: 8px; flex: none; }
+.timer-btn { position: relative; }
+.timer-btn .ico-board { display: none; }
+.timer-btn[aria-pressed="true"] .ico-timer { display: none; }
+.timer-btn[aria-pressed="true"] .ico-board { display: block; }
+/* Small dot while the timer runs, so it's visible from the exam boards too */
+.run-dot {
+  position: absolute; top: 7px; inset-inline-end: 7px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--pc, #7c5cff); box-shadow: 0 0 0 2px var(--surface);
+  opacity: 0; transform: scale(0.4); transition: opacity 0.2s, transform 0.2s;
+}
+.timer-btn[data-running="true"] .run-dot { opacity: 1; transform: scale(1); }
 
-/* Same arrangement as .hero: details at the inline start, the big number at the inline end */
-.pomo-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px 40px; }
-.pomo-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.pomo-clock { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 300px; }
+/* ---------- Timer page ("זמן ללמוד") ---------- */
+/* --pc = accent of the current mode (focus follows the task's course colour) */
+.timer-view { --pc: #7c5cff; display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 680px; margin-inline: auto; }
+.back-link {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px;
+  color: var(--muted); font-weight: 600; font-size: 0.9rem; text-decoration: none;
+  padding: 6px 4px; border-radius: 10px;
+}
+.back-link:hover { color: var(--text); }
+.back-link svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.pomo { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 20px 24px; transition: box-shadow 0.3s; }
+.pomo-top { display: flex; align-items: center; gap: 10px; width: 100%; }
+.pomo-gear { flex: none; width: 44px; height: 44px; border-radius: 14px; }
 
 /* Mode tabs: a compact sibling of .tabs-track */
 .pomo-modes {
-  position: relative; display: grid; grid-template-columns: repeat(3, 1fr);
+  flex: 1; position: relative; display: grid; grid-template-columns: repeat(3, 1fr);
   padding: 4px; border-radius: 16px; background: var(--surface-2); border: 1px solid var(--border);
 }
 .pomo-modes::before {
@@ -311,31 +330,34 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 }
 .pomo-mode[aria-selected="true"] { color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt)); font-weight: 700; }
 
-/* Exam selector */
-.pomo-field { display: flex; flex-direction: column; gap: 6px; }
-.pomo-select { position: relative; display: flex; align-items: center; }
-.pomo-select select {
-  width: 100%; min-height: 48px; margin: 0;
-  -webkit-appearance: none; appearance: none;
-  font: inherit; font-size: 0.95rem; font-weight: 600; color: var(--text);
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: 14px;
-  padding-block: 10px; padding-inline: 34px 40px;
-  text-overflow: ellipsis; cursor: pointer;
+/* Clock: same typography as the hero's day count */
+.pomo-time {
+  direction: ltr; unicode-bidi: isolate; margin-top: 10px;
+  font-size: clamp(5rem, 20vw, 8.5rem); font-weight: 800; line-height: 0.95; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt));
+  transition: color 0.35s, opacity 0.35s;
 }
-.pomo-select select:disabled { color: var(--muted); cursor: default; }
-.pomo-swatch {
-  position: absolute; inset-inline-start: 14px; width: 8px; height: 24px; border-radius: 4px;
-  background: var(--pc); pointer-events: none; transition: background 0.3s;
+.pomo[data-state="paused"] .pomo-time { opacity: 0.65; }
+.pomo-cycle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.88rem; font-weight: 600; }
+.pomo-dots { display: inline-flex; gap: 5px; }
+.pomo-dots i {
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--pc); background: transparent; transition: background 0.3s, border-color 0.3s;
 }
-.pomo-chevron { position: absolute; inset-inline-end: 12px; display: grid; place-items: center; pointer-events: none; color: var(--muted); }
-.pomo-chevron svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pomo-dots i.on { background: var(--pc); }
+.pomo-progress { width: 100%; max-width: 360px; margin-top: 0; }
+.pomo-progress i { width: var(--p, 0%); background: var(--pc); transition: width 0.3s linear, background 0.3s; }
+.pomo-now { min-height: 1.4em; font-size: 0.95rem; color: var(--muted); text-align: center; }
+.pomo-now b { color: var(--text); font-weight: 700; }
+.muted { color: var(--muted); }
 
 /* Buttons */
-.pomo-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pomo-controls { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .pomo-main {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-width: 150px; min-height: 50px; padding: 0 26px; border: 0; border-radius: 999px;
-  font-size: 1.08rem; font-weight: 800; color: #fff;
+  min-width: 170px; min-height: 54px; padding: 0 28px; border: 0; border-radius: 999px;
+  font-size: 1.12rem; font-weight: 800; color: #fff;
   background: linear-gradient(135deg, var(--pc), color-mix(in srgb, var(--pc), #0d0c16 45%));
   box-shadow: 0 14px 30px -14px color-mix(in srgb, var(--pc) 75%, transparent);
   transition: transform 0.15s, box-shadow 0.2s, background 0.3s;
@@ -343,6 +365,7 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .pomo-main:hover { transform: translateY(-1px); box-shadow: 0 18px 34px -14px color-mix(in srgb, var(--pc) 80%, transparent); }
 .pomo-main:active { transform: translateY(1px) scale(0.98); }
 .pomo-main svg { width: 18px; height: 18px; fill: currentColor; }
+.pomo-main.sm { min-width: 96px; min-height: 42px; padding: 0 20px; font-size: 0.95rem; }
 .pomo-ghost {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 46px; padding: 0 16px; border-radius: 14px;
@@ -351,31 +374,9 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 }
 .pomo-ghost:hover { color: var(--text); }
 .pomo-ghost svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-
-/* Clock: same typography as the hero's day count */
-.pomo-time {
-  direction: ltr; unicode-bidi: isolate;
-  font-size: clamp(4.5rem, 12vw, 7.5rem); font-weight: 800; line-height: 0.95; letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-  color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt));
-  transition: color 0.35s, opacity 0.35s;
-}
-.pomo[data-mode="short"] .pomo-time, .pomo[data-mode="long"] .pomo-time { color: var(--text); }
-.pomo[data-state="paused"] .pomo-time { opacity: 0.65; }
-.pomo-cycle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; font-weight: 500; }
-.pomo-dots { display: inline-flex; gap: 5px; }
-.pomo-dots i {
-  width: 10px; height: 10px; border-radius: 50%;
-  border: 2px solid var(--pc); background: transparent; transition: background 0.3s;
-}
-.pomo-dots i.on { background: var(--pc); }
-.pomo-progress { width: 100%; max-width: 320px; margin-top: 0; }
-.pomo-progress i { width: var(--p, 0%); background: var(--pc); transition: width 0.3s linear, background 0.3s; }
-
-/* Summary: the dashboard's own .stat tiles */
-.pomo-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border); }
-.pomo-summary .stat { background: var(--surface-2); box-shadow: none; }
-.pomo-exam-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.text-btn { border: 0; background: transparent; padding: 6px 8px; border-radius: 10px; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+.text-btn:hover { color: var(--text); }
+.text-btn.danger { color: #e5484d; }
 
 /* Short completion feedback */
 .pomo-done { animation: pomoDone 1.2s ease; }
@@ -384,7 +385,99 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
   30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--pc) 45%, transparent), var(--shadow); }
 }
 
-/* Study info + "התחל ללמוד" on exam cards */
+/* ---------- Tasks ---------- */
+.tasks { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; }
+.task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.task {
+  --tc: var(--pc);
+  position: relative; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 16px; overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: background 0.2s, border-color 0.2s;
+}
+/* The active task gets the same coloured edge as the exam cards */
+.task::before { content: ''; position: absolute; inset-block: 0; inset-inline-start: 0; width: 5px; background: var(--tc); opacity: 0; transition: opacity 0.2s; }
+.task.is-active { background: var(--surface); border-color: color-mix(in srgb, var(--tc) 35%, var(--border)); box-shadow: var(--shadow); }
+.task.is-active::before { opacity: 1; }
+.task-check {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; padding: 0;
+  display: grid; place-items: center; border: 2px solid var(--border); background: var(--surface); color: transparent;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.task-check svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.task-check:hover { color: var(--muted); }
+.task.is-done .task-check { background: var(--tc); border-color: var(--tc); color: #fff; }
+.task-main {
+  flex: 1; min-width: 0; border: 0; background: transparent; padding: 2px 0; text-align: start;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.task-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.98rem; color: var(--text); overflow-wrap: anywhere; }
+.task-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--tc); }
+.task-note { font-size: 0.82rem; color: var(--muted); overflow-wrap: anywhere; }
+.task.is-done .task-title { text-decoration: line-through; color: var(--muted); }
+.task-count { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.task-count small { color: var(--muted); font-weight: 500; }
+.task-more {
+  flex: none; width: 34px; height: 34px; padding: 0; border-radius: 10px;
+  display: grid; place-items: center; border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+}
+.task-more svg { width: 18px; height: 18px; fill: currentColor; }
+.task-more:hover { color: var(--text); }
+
+.add-task {
+  width: 100%; min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: 16px; border: 2px dashed var(--border); background: transparent;
+  font-weight: 700; color: var(--muted); transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+.add-task:hover { color: var(--text); border-color: color-mix(in srgb, var(--pc) 40%, var(--border)); background: var(--surface-2); }
+.add-task svg, .step-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+
+.task-edit { list-style: none; }
+.task-form {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px;
+  border-radius: 16px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.task-input {
+  width: 100%; border: 0; border-bottom: 1px solid var(--border); background: transparent;
+  padding: 6px 2px 10px; font: inherit; font-size: 1.15rem; font-weight: 700; color: var(--text);
+}
+.task-input::placeholder, .task-note-input::placeholder { color: var(--muted); font-weight: 500; }
+.task-input:focus { outline: none; border-bottom-color: var(--pc); }
+.task-form-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.task-form-label { color: var(--muted); font-size: 0.88rem; font-weight: 600; }
+.task-nums { display: flex; align-items: center; gap: 8px; }
+.task-slash { color: var(--muted); font-weight: 700; }
+.stepper { display: flex; align-items: center; gap: 6px; }
+.task-num {
+  width: 64px; min-height: 40px; text-align: center;
+  font: inherit; font-weight: 700; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+}
+.step-btn {
+  width: 40px; height: 40px; padding: 0; display: grid; place-items: center;
+  border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); box-shadow: var(--shadow);
+}
+.step-btn:hover { color: var(--text); }
+.task-note-input {
+  width: 100%; resize: vertical; min-height: 64px; padding: 10px 12px;
+  font: inherit; font-size: 0.92rem; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px;
+}
+.task-form > .text-btn { align-self: flex-start; }
+.task-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.task-form-actions .danger { margin-inline-end: auto; }
+.task-form-actions .pomo-ghost { min-height: 42px; }
+
+.tasks-foot {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 6px;
+  padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.88rem;
+}
+.tasks-foot b { color: var(--text); font-variant-numeric: tabular-nums; }
+.tasks-foot .sep { opacity: 0.6; margin-inline: 4px; }
+
+.timer-view .pomo-stats { grid-template-columns: 1fr 1fr; }
+
+/* ---------- Study info + "התחל ללמוד" on exam cards ---------- */
 .card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
 .card-study { display: flex; flex-direction: column; font-size: 0.78rem; line-height: 1.3; color: var(--muted); }
 .card-study b { color: var(--text); font-weight: 600; }
@@ -399,7 +492,7 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .study-btn:hover { background: color-mix(in srgb, var(--c) 24%, transparent); }
 .study-btn svg { width: 12px; height: 12px; fill: currentColor; }
 
-/* Settings dialog: styled like a .panel */
+/* ---------- Settings dialog: styled like a .panel ---------- */
 .modal {
   --pc: #7c5cff;
   width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
@@ -416,6 +509,7 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .set-group { display: flex; flex-direction: column; background: var(--surface-2); border-radius: 16px; padding: 2px 14px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; border-bottom: 1px solid var(--border); font-weight: 500; }
 .set-row:last-child { border-bottom: 0; }
+.set-ctl { display: inline-flex; align-items: center; gap: 6px; }
 .set-num { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.85rem; }
 .set-num input {
   width: 68px; min-height: 38px; text-align: center;
@@ -439,7 +533,9 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 
 /* Keyboard focus */
 .pomo-mode:focus-visible, .pomo-main:focus-visible, .pomo-ghost:focus-visible, .study-btn:focus-visible,
-.pomo-select select:focus-visible, .icon-btn:focus-visible, .set-num input:focus-visible, .switch:focus-visible {
+.icon-btn:focus-visible, .set-num input:focus-visible, .switch:focus-visible, .text-btn:focus-visible,
+.task-check:focus-visible, .task-main:focus-visible, .task-more:focus-visible, .add-task:focus-visible,
+.step-btn:focus-visible, .task-num:focus-visible, .task-note-input:focus-visible, .back-link:focus-visible {
   outline: 2px solid var(--text); outline-offset: 2px;
 }
 
@@ -463,13 +559,14 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
   .board-tab { padding: 8px 6px; }
   .tab-title { font-size: 1rem; }
   .tab-meta { font-size: 0.72rem; }
-  .pomo-body { grid-template-columns: 1fr; gap: 16px; }
-  .pomo-clock { order: -1; min-width: 0; }
-  .pomo-time { font-size: clamp(4.5rem, 22vw, 6.5rem); }
-  .pomo-progress { max-width: none; }
-  .pomo-mode { font-size: 0.84rem; padding: 8px 2px; }
-  .pomo-controls .pomo-main { flex: 1 1 100%; }
+  .timer-view { gap: 16px; }
+  .pomo { padding: 14px 12px 20px; }
+  .pomo-mode { font-size: 0.8rem; padding: 8px 2px; white-space: nowrap; }
+  .pomo-controls { width: 100%; }
+  .pomo-controls .pomo-main { order: -1; flex: 1 1 100%; }
   .pomo-controls .pomo-ghost { flex: 1 1 0; }
+  .tasks { padding-inline: 12px; }
+  .task { padding: 10px; gap: 8px; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .card { padding: 14px 14px 12px; gap: 6px; }
   .card h3 { font-size: 0.95rem; }

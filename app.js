@@ -196,7 +196,6 @@ function boardHTML(m, exams, today) {
     <section class="board" id="board-${m.key}" role="tabpanel" aria-labelledby="tab-${m.key}">
       ${heroHTML(m, exams)}
       ${statsHTML(exams)}
-      ${pomodoroHTML(m)}
       ${timelineHTML(m, exams, today)}
       <h2 class="section-title">כל המבחנים · ${m.title}</h2>
       <div class="grid">${upcoming.map(card).join('')}${past.map(card).join('')}</div>
@@ -222,16 +221,15 @@ const tabsEl = document.getElementById('tabs');
 let active = null;
 
 function markActive(key) {
-  const prev = active;
   active = key;
-  if (prev && prev !== key) onBoardChangePomodoro(key);
   tabsEl.dataset.active = key;
   tabsEl.querySelectorAll('[data-tab]').forEach((b) => {
     const on = b.dataset.tab === key;
     b.setAttribute('aria-selected', String(on));
     b.tabIndex = on ? 0 : -1;
   });
-  if (location.hash !== `#moed-${key}`) history.replaceState(null, '', `#moed-${key}`);
+  // While the timer page is open its own hash (#timer) stays in the address bar
+  if (view === 'dashboard' && location.hash !== `#moed-${key}`) history.replaceState(null, '', `#moed-${key}`);
 }
 
 function showBoard(key, smooth = true) {
@@ -290,37 +288,41 @@ function render(force = false) {
   }
   showBoard(active, false);
 
-  // Pomodoro lives outside the board markup: re-attach it to the freshly built panels
-  ensurePomodoroExam();
-  renderPomodoro(true);
+  // Study time on the cards and the "today" stats on the timer page depend on the date too
   renderStudyBadges();
+  renderPomoStats();
 }
 
 // =====================================================================
-// Pomodoro ("זמן ללמוד")
-// One state object for the whole app. Both boards render a view of it,
-// so rebuilding the boards (e.g. at midnight) never touches the timer.
+// Study timer ("זמן ללמוד") — its own page (#timer), one state for the whole app.
+// The timer keeps running while you browse the exam boards; it is never
+// part of the board markup, so board re-renders can't touch it.
 // =====================================================================
 
-// ---------- Pomodoro: state ----------
-const POMO_KEYS = { settings: 'pomodoro-settings', state: 'pomodoro-state', sessions: 'pomodoro-sessions' };
+// ---------- Timer: state ----------
+const POMO_KEYS = {
+  settings: 'pomodoro-settings', state: 'pomodoro-state',
+  sessions: 'pomodoro-sessions', tasks: 'pomodoro-tasks',
+};
 const POMO_MODES = [
   { key: 'focus', label: 'ריכוז' },
   { key: 'short', label: 'הפסקה קצרה' },
   { key: 'long', label: 'הפסקה ארוכה' },
 ];
+// Accent per mode, taken from the dashboard's palette (focus follows the task's course when it has one)
+const MODE_ACCENT = { focus: '#7c5cff', short: '#14b8a6', long: '#2f8cff' };
 const POMO_LIMITS = { focusMinutes: [1, 90], shortBreakMinutes: [1, 30], longBreakMinutes: [1, 60], longBreakAfter: [2, 8] };
 const POMO_FLAGS = ['autoStartBreak', 'autoStartFocus', 'soundEnabled', 'notificationsEnabled'];
 const DEFAULT_SETTINGS = {
   focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, longBreakAfter: 4,
   autoStartBreak: false, autoStartFocus: false, soundEnabled: true, notificationsEnabled: false,
 };
-const POMO_ACCENT = '#7c5cff';
+const TASK_EST_MAX = 20;
+const ALARM_SRC = 'sounds/timer-end.wav';
 const BASE_TITLE = document.title;
 
-const pomo = { settings: { ...DEFAULT_SETTINGS }, state: null, sessions: [] };
+const pomo = { settings: { ...DEFAULT_SETTINGS }, state: null, sessions: [], tasks: [] };
 let pomoTick = null;   // the only timer interval in the app; it only refreshes the display
-let audioCtx = null;
 
 const clampInt = (v, [min, max], def) => {
   const n = Math.round(Number(v));
@@ -340,16 +342,28 @@ function modeDuration(mode, settings = pomo.settings) {
 }
 
 const validSession = (x) => x && typeof x.id === 'string' && !Number.isNaN(Date.parse(x.completedAt));
+const validTask = (t) => t && typeof t.id === 'string' && typeof t.title === 'string' && t.title.trim();
+const cleanTask = (t) => ({
+  id: t.id,
+  title: t.title.trim().slice(0, 80),
+  est: clampInt(t.est, [1, TASK_EST_MAX], 1),
+  act: clampInt(t.act, [0, 999], 0),
+  done: t.done === true,
+  note: typeof t.note === 'string' ? t.note.slice(0, 300) : '',
+  examId: EXAMS.some((e) => e.id === t.examId) ? t.examId : null,
+});
 
 function loadPomodoroState() {
   pomo.settings = sanitizeSettings(store.getJSON(POMO_KEYS.settings, {}));
+  const tasks = store.getJSON(POMO_KEYS.tasks, []);
+  pomo.tasks = Array.isArray(tasks) ? tasks.filter(validTask).map(cleanTask) : [];
   const s = store.getJSON(POMO_KEYS.state, {});
   const mode = POMO_MODES.some((m) => m.key === s.mode) ? s.mode : 'focus';
   const durationMs = Number.isFinite(s.durationMs) && s.durationMs > 0 ? s.durationMs : modeDuration(mode);
   const isRunning = s.isRunning === true && Number.isFinite(s.endTime);
   pomo.state = {
     mode,
-    selectedExamId: EXAMS.some((e) => e.id === s.selectedExamId) ? s.selectedExamId : null,
+    activeTaskId: pomo.tasks.some((t) => t.id === s.activeTaskId) ? s.activeTaskId : null,
     isRunning,
     endTime: isRunning ? s.endTime : null,
     remainingMs: Number.isFinite(s.remainingMs) ? Math.min(Math.max(0, s.remainingMs), durationMs) : durationMs,
@@ -362,37 +376,24 @@ function loadPomodoroState() {
 const savePomodoroState = () => store.setJSON(POMO_KEYS.state, pomo.state);
 const savePomodoroSettings = () => store.setJSON(POMO_KEYS.settings, pomo.settings);
 const savePomodoroSessions = () => store.setJSON(POMO_KEYS.sessions, pomo.sessions);
+const saveTasks = () => store.setJSON(POMO_KEYS.tasks, pomo.tasks);
 
 // Remaining time is always derived from endTime, so throttled tabs / sleep / lock screens stay accurate
 const remainingNow = () => (pomo.state.isRunning ? Math.max(0, pomo.state.endTime - Date.now()) : pomo.state.remainingMs);
 // "Active" = running, or paused part-way through a session
 const pomoActive = () => pomo.state.isRunning || pomo.state.remainingMs < pomo.state.durationMs;
 
-function upcomingExams() {
-  const today = todayISO();
-  return EXAMS.map((e) => ({ ...e, d: daysUntil(e.date, today) })).filter((e) => e.d >= 0);
-}
-function defaultExamFor(boardKey) {
-  const up = upcomingExams();
-  const moed = MOEDS.find((m) => m.key === boardKey)?.moed;
-  return (up.find((e) => e.moed === moed) ?? up[0])?.id ?? null;
-}
-const selectedExam = () => EXAMS.find((e) => e.id === pomo.state.selectedExamId) ?? null;
-
-// Keep the selection valid: a missing or finished exam falls back to the nearest exam on the current board,
-// but never while a session is in progress.
-function ensurePomodoroExam() {
-  const sel = pomo.state.selectedExamId;
-  if (sel && (pomoActive() || upcomingExams().some((e) => e.id === sel))) return;
-  const next = defaultExamFor(active);
-  if (next !== sel) { pomo.state.selectedExamId = next; savePomodoroState(); }
-}
+const activeTask = () => pomo.tasks.find((t) => t.id === pomo.state.activeTaskId) ?? null;
+const taskColor = (t) => EXAMS.find((e) => e.id === t?.examId)?.color ?? null;
+const pomoAccent = () => (pomo.state.mode === 'focus' ? taskColor(activeTask()) ?? MODE_ACCENT.focus : MODE_ACCENT[pomo.state.mode]);
 
 function getPomodoroStats(examId) {
   const today = todayISO();
+  const weekAgo = Date.now() - 7 * DAY;
   const sum = (list) => ({ count: list.length, minutes: list.reduce((a, x) => a + (Number(x.durationMinutes) || 0), 0) });
   return {
     today: sum(pomo.sessions.filter((x) => israelISO(new Date(x.completedAt)) === today)),
+    week: sum(pomo.sessions.filter((x) => Date.parse(x.completedAt) >= weekAgo)),
     exam: sum(examId ? pomo.sessions.filter((x) => x.examId === examId) : []),
   };
 }
@@ -401,8 +402,10 @@ const fmtClock = (ms) => {
   const t = Math.ceil(ms / 1000);
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
+const fmtTimeOfDay = new Intl.DateTimeFormat('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' });
+const rounds = (n) => (n === 1 ? 'סבב אחד' : `${n} סבבים`);
 
-// ---------- Pomodoro: actions ----------
+// ---------- Timer: actions ----------
 function setMode(mode, autoStart = false) {
   const s = pomo.state;
   s.mode = mode;
@@ -441,7 +444,7 @@ function pausePomodoro() {
 // Back to the full length of the current mode; nothing is recorded
 const resetPomodoro = () => setMode(pomo.state.mode);
 
-// Move on without recording anything (only a Focus that reaches 00:00 counts)
+// Move on without recording anything (only a focus round that reaches 00:00 counts)
 function skipPomodoro() {
   const s = pomo.state;
   if (s.mode === 'long') s.completedInCycle = 0;
@@ -454,28 +457,25 @@ function setPomodoroMode(mode) {
   setMode(mode);
 }
 
-function selectPomodoroExam(id) {
-  if (!EXAMS.some((e) => e.id === id)) return;
-  pomo.state.selectedExamId = id;
-  savePomodoroState();
-  renderPomodoro();
-}
-
 function recordSession(endTime, durationMs) {
-  // The id is derived from endTime, so a refresh or a second tab can never store the same Focus twice
+  // The id is derived from endTime, so a refresh or a second tab can never store the same round twice
   const id = `pf-${endTime}`;
   const fresh = store.getJSON(POMO_KEYS.sessions, null);
   if (Array.isArray(fresh)) pomo.sessions = fresh.filter(validSession);
-  if (pomo.sessions.some((x) => x.id === id)) return;
-  const exam = selectedExam();
+  if (pomo.sessions.some((x) => x.id === id)) return false;
+  const task = activeTask();
+  const exam = EXAMS.find((e) => e.id === task?.examId);
   pomo.sessions.push({
     id,
+    taskId: task?.id ?? null,
+    taskTitle: task?.title ?? null,
     examId: exam?.id ?? null,
     course: exam?.course ?? null,
     completedAt: new Date(endTime).toISOString(),
     durationMinutes: Math.round(durationMs / 60000),
   });
   savePomodoroSessions();
+  return true;
 }
 
 function completePomodoro() {
@@ -483,12 +483,15 @@ function completePomodoro() {
   if (!s.isRunning || Date.now() < s.endTime) return;
   const finished = s.mode;
   const endTime = s.endTime;
-  // Finished long ago (page was closed)? Don't chime or auto-start the next step out of the blue
+  // Finished long ago (page was closed)? Don't ring or auto-start the next step out of the blue
   const late = Date.now() - endTime > 60000;
 
   let next = 'focus';
   if (finished === 'focus') {
-    recordSession(endTime, s.durationMs);
+    if (recordSession(endTime, s.durationMs)) {
+      const task = activeTask();
+      if (task) { task.act += 1; saveTasks(); }
+    }
     s.completedInCycle += 1;
     next = s.completedInCycle >= pomo.settings.longBreakAfter ? 'long' : 'short';
   } else if (finished === 'long') {
@@ -497,15 +500,16 @@ function completePomodoro() {
   const auto = !late && (next === 'focus' ? pomo.settings.autoStartFocus : pomo.settings.autoStartBreak);
   setMode(next, auto);   // persists the new state before any side effect
 
+  renderTasks();
   renderStudyBadges();
   if (!late) {
-    playChime();
+    playAlarm();
     notifyPomodoro(finished);
     flashPomodoro();
   }
 }
 
-// ---------- Pomodoro: ticking ----------
+// ---------- Timer: ticking ----------
 function startTicking() {
   if (!pomoTick) pomoTick = setInterval(checkPomodoro, 250);
   renderTime();
@@ -521,121 +525,233 @@ function checkPomodoro() {
   else renderTime();
 }
 
-// ---------- Pomodoro: sound & notifications ----------
-function unlockAudio() {
-  if (!pomo.settings.soundEnabled) return;
-  try {
-    audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-  } catch { audioCtx = null; }
+// ---------- Tasks ----------
+let taskForm = null;   // null | 'new' | <task id being edited>
+
+function addTask({ title, est = 1, note = '', examId = null }) {
+  const task = cleanTask({ id: `t-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, title, est, note, examId });
+  pomo.tasks.push(task);
+  if (!activeTask()) pomo.state.activeTaskId = task.id;
+  saveTasks();
+  savePomodoroState();
+  return task;
 }
 
-function playChime() {
-  if (!pomo.settings.soundEnabled) return;
+function updateTask(id, patch) {
+  const i = pomo.tasks.findIndex((t) => t.id === id);
+  if (i < 0) return;
+  pomo.tasks[i] = cleanTask({ ...pomo.tasks[i], ...patch });
+  saveTasks();
+}
+
+function deleteTask(id) {
+  pomo.tasks = pomo.tasks.filter((t) => t.id !== id);
+  if (pomo.state.activeTaskId === id) {
+    pomo.state.activeTaskId = pomo.tasks.find((t) => !t.done)?.id ?? null;
+    savePomodoroState();
+  }
+  saveTasks();
+}
+
+function setActiveTask(id) {
+  if (!pomo.tasks.some((t) => t.id === id)) return;
+  pomo.state.activeTaskId = id;
+  savePomodoroState();
+}
+
+function toggleTaskDone(id) {
+  const t = pomo.tasks.find((x) => x.id === id);
+  if (!t) return;
+  t.done = !t.done;
+  // Finishing the active task hands focus to the next open one
+  if (t.done && pomo.state.activeTaskId === id) {
+    pomo.state.activeTaskId = pomo.tasks.find((x) => !x.done)?.id ?? id;
+    savePomodoroState();
+  }
+  saveTasks();
+}
+
+function clearDoneTasks() {
+  pomo.tasks = pomo.tasks.filter((t) => !t.done);
+  if (!activeTask()) { pomo.state.activeTaskId = pomo.tasks[0]?.id ?? null; savePomodoroState(); }
+  saveTasks();
+}
+
+// "התחל ללמוד" on an exam card: reuse (or create) a task for that exam and open the timer page
+function studyForExam(examId) {
+  const exam = EXAMS.find((e) => e.id === examId);
+  if (!exam) return;
+  const task = pomo.tasks.find((t) => t.examId === examId && !t.done)
+    ?? addTask({ title: `${exam.name} · ${moedLabel(exam.moed)}`, examId });
+  setActiveTask(task.id);
+  // "Start studying" means a focus round: leave an untouched break for it (never interrupts a running round)
+  if (!pomoActive() && pomo.state.mode !== 'focus') setMode('focus');
+  taskForm = null;
+  renderTasks();
+  openTimerPage();
+}
+
+// Rough finish estimate for the open tasks (focus rounds + the breaks between them)
+function tasksEstimate() {
+  const open = pomo.tasks.filter((t) => !t.done);
+  const left = open.reduce((a, t) => a + Math.max(0, t.est - t.act), 0);
+  const act = pomo.tasks.reduce((a, t) => a + t.act, 0);
+  const est = pomo.tasks.reduce((a, t) => a + Math.max(t.est, t.act), 0);
+  if (!left) return { act, est, left };
+  const { focusMinutes, shortBreakMinutes, longBreakMinutes, longBreakAfter } = pomo.settings;
+  const breaks = left - 1;
+  const longs = Math.floor((pomo.state.completedInCycle + breaks) / longBreakAfter);
+  const minutes = left * focusMinutes + (breaks - longs) * shortBreakMinutes + longs * longBreakMinutes;
+  return { act, est, left, minutes, finish: fmtTimeOfDay.format(new Date(Date.now() + minutes * 60000)) };
+}
+
+// ---------- Sound & notifications ----------
+let alarm = null;
+let audioUnlocked = false;
+function getAlarm() {
+  if (!alarm) {
+    alarm = new Audio(ALARM_SRC);
+    alarm.preload = 'auto';
+  }
+  return alarm;
+}
+// Called from a user gesture (Start) so mobile browsers allow the alarm to play later
+function unlockAudio() {
+  if (!pomo.settings.soundEnabled || audioUnlocked) return;
   try {
-    unlockAudio();
-    if (!audioCtx) return;
-    const now = audioCtx.currentTime;
-    [[784, 0], [1175, 0.18]].forEach(([freq, at]) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, now + at);
-      gain.gain.exponentialRampToValueAtTime(0.16, now + at + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + at + 0.6);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(now + at);
-      osc.stop(now + at + 0.65);
-    });
-  } catch { /* audio blocked: stay silent */ }
+    const a = getAlarm();
+    a.muted = true;
+    a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; audioUnlocked = true; })
+      .catch(() => { a.muted = false; });
+  } catch { /* no audio support */ }
+}
+function playAlarm(force = false) {
+  if (!force && !pomo.settings.soundEnabled) return;
+  try {
+    const a = getAlarm();
+    a.muted = false;
+    a.currentTime = 0;
+    a.play().catch(() => {});   // autoplay blocked: stay silent
+  } catch { /* no audio support */ }
 }
 
 function notifyPomodoro(finished) {
   if (!pomo.settings.notificationsEnabled || !('Notification' in window) || Notification.permission !== 'granted') return;
   const [title, body] = finished === 'focus'
-    ? ['הפומודורו הסתיים', 'הגיע הזמן להפסקה.']
+    ? ['סבב הריכוז הסתיים', 'הגיע הזמן להפסקה.']
     : ['ההפסקה הסתיימה', 'חוזרים ללמוד.'];
-  try { new Notification(title, { body, lang: 'he', dir: 'rtl', tag: 'pomodoro' }); } catch { /* e.g. mobile without SW */ }
+  try { new Notification(title, { body, lang: 'he', dir: 'rtl', tag: 'study-timer' }); } catch { /* e.g. mobile without SW */ }
 }
 
-// ---------- Pomodoro: rendering ----------
-const pomoPanels = () => document.querySelectorAll('[data-pomo]');
+// ---------- Timer page: markup ----------
+const timerView = document.getElementById('timerView');
 const ICONS = {
   play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10-6.5z"/></svg>',
   pause: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>',
   reset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4"/></svg>',
   skip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6.5 14 12l-8 5.5zM18 6v12"/></svg>',
   settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>',
-  chevron: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>',
+  check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"/></svg>',
+  more: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5.5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="18.5" r="1.6"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>',
+  back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
 };
 
-function pomodoroHTML(m) {
-  const k = m.key;
+function timerPageHTML() {
   return `
-    <section class="panel pomo" id="pomo-${k}" data-pomo aria-labelledby="pomo-title-${k}">
+    <a class="back-link" href="#moed-a" data-back>${ICONS.back}<span>חזרה ללוח המבחנים</span></a>
+
+    <section class="panel pomo" data-pomo aria-label="טיימר">
+      <div class="pomo-top">
+        <div class="pomo-modes" role="tablist" aria-label="מצב טיימר">
+          ${POMO_MODES.map((md) => `<button type="button" role="tab" class="pomo-mode" data-pomo-mode="${md.key}">${md.label}</button>`).join('')}
+        </div>
+        <button type="button" class="icon-btn pomo-gear" data-pomo-action="settings" aria-label="הגדרות הטיימר" aria-haspopup="dialog">${ICONS.settings}</button>
+      </div>
+      <div class="pomo-time" role="timer" aria-label="זמן שנותר" data-pomo-time>25:00</div>
+      <p class="pomo-cycle" data-pomo-cycle aria-live="polite"></p>
+      <span class="progress pomo-progress" aria-hidden="true"><i data-pomo-bar></i></span>
+      <p class="pomo-now" data-pomo-now></p>
+      <div class="pomo-controls">
+        <button type="button" class="pomo-ghost" data-pomo-action="reset" aria-label="איפוס הטיימר">${ICONS.reset}<span>איפוס</span></button>
+        <button type="button" class="pomo-main" data-pomo-action="toggle"></button>
+        <button type="button" class="pomo-ghost" data-pomo-action="skip" aria-label="דילוג לשלב הבא">${ICONS.skip}<span>דילוג</span></button>
+      </div>
+    </section>
+
+    <section class="panel tasks" aria-labelledby="tasksTitle">
       <div class="panel-head">
-        <div class="pomo-heading">
-          <h2 id="pomo-title-${k}">זמן ללמוד</h2>
-          <span class="panel-note">פומודורו</span>
-        </div>
-        <button type="button" class="icon-btn pomo-gear" data-pomo-action="settings" aria-label="הגדרות פומודורו" aria-haspopup="dialog">${ICONS.settings}</button>
+        <h2 id="tasksTitle">משימות</h2>
+        <button type="button" class="text-btn" data-task-action="clear-done" hidden>ניקוי משימות שהושלמו</button>
       </div>
-      <div class="pomo-body">
-        <div class="pomo-side">
-          <div class="pomo-modes" role="tablist" aria-label="מצב טיימר">
-            ${POMO_MODES.map((md) => `<button type="button" role="tab" class="pomo-mode" data-pomo-mode="${md.key}">${md.label}</button>`).join('')}
-          </div>
-          <label class="pomo-field" for="pomo-exam-${k}">
-            <span class="stat-label">לומד עכשיו ל...</span>
-            <span class="pomo-select">
-              <span class="pomo-swatch" aria-hidden="true"></span>
-              <select id="pomo-exam-${k}" data-pomo-exam></select>
-              <span class="pomo-chevron">${ICONS.chevron}</span>
-            </span>
-          </label>
-          <div class="pomo-controls">
-            <button type="button" class="pomo-main" data-pomo-action="toggle"></button>
-            <button type="button" class="pomo-ghost" data-pomo-action="reset" aria-label="איפוס הטיימר">${ICONS.reset}<span>איפוס</span></button>
-            <button type="button" class="pomo-ghost" data-pomo-action="skip" aria-label="דילוג לשלב הבא">${ICONS.skip}<span>דילוג</span></button>
-          </div>
-        </div>
-        <div class="pomo-clock">
-          <div class="pomo-time" role="timer" aria-label="זמן שנותר" data-pomo-time>25:00</div>
-          <p class="pomo-cycle" data-pomo-cycle aria-live="polite"></p>
-          <span class="progress pomo-progress" aria-hidden="true"><i data-pomo-bar></i></span>
-        </div>
+      <ul class="task-list" data-task-list></ul>
+      <div data-task-new></div>
+      <p class="tasks-foot" data-tasks-foot></p>
+    </section>
+
+    <section class="stats pomo-stats" aria-label="זמן לימוד">
+      <div class="stat">
+        <span class="stat-label">היום</span>
+        <span class="stat-val" data-stat-today></span>
+        <span class="stat-foot" data-stat-today-foot></span>
       </div>
-      <div class="pomo-summary">
-        <div class="stat">
-          <span class="stat-label">היום</span>
-          <span class="stat-val" data-pomo-today></span>
-          <span class="stat-foot" data-pomo-today-foot></span>
-        </div>
-        <div class="stat">
-          <span class="stat-label pomo-exam-name" data-pomo-exam-name></span>
-          <span class="stat-val" data-pomo-exam-count></span>
-          <span class="stat-foot" data-pomo-exam-foot></span>
-        </div>
+      <div class="stat">
+        <span class="stat-label">7 הימים האחרונים</span>
+        <span class="stat-val" data-stat-week></span>
+        <span class="stat-foot" data-stat-week-foot></span>
       </div>
     </section>`;
 }
 
-function examOptionsHTML() {
-  const today = todayISO();
-  const up = upcomingExams();
-  const sel = selectedExam();
-  // A finished exam stays listed only while its session is still in progress
-  const list = sel && !up.some((e) => e.id === sel.id) ? [{ ...sel, d: daysUntil(sel.date, today) }, ...up] : up;
-  if (!list.length) return '<option value="">אין מבחנים עתידיים</option>';
-  const when = (d) => (d > 1 ? `עוד ${d} ימים` : d === 1 ? 'מחר' : d === 0 ? 'היום' : 'הסתיים');
-  return list.map((e) => `<option value="${e.id}">${esc(e.name)} · ${moedLabel(e.moed)} · ${when(e.d)}</option>`).join('');
+function taskFormHTML(task) {
+  const editing = !!task;
+  return `
+    <form class="task-form" data-task-form="${editing ? task.id : 'new'}">
+      <input class="task-input" name="title" maxlength="80" required autocomplete="off"
+        placeholder="על מה עובדים?" aria-label="שם המשימה" value="${editing ? esc(task.title) : ''}">
+      <div class="task-form-row">
+        <span class="task-form-label">${editing ? 'בוצעו / הערכה' : 'הערכת סבבים'}</span>
+        <div class="task-nums">
+          ${editing ? `<input class="task-num" type="number" name="act" min="0" max="999" value="${task.act}" aria-label="סבבים שבוצעו"><span class="task-slash">/</span>` : ''}
+          <div class="stepper">
+            <input class="task-num" type="number" name="est" min="1" max="${TASK_EST_MAX}" value="${editing ? task.est : 1}" aria-label="הערכת סבבים">
+            <button type="button" class="step-btn" data-step="1" aria-label="סבב נוסף">${ICONS.plus}</button>
+            <button type="button" class="step-btn" data-step="-1" aria-label="סבב אחד פחות">${ICONS.minus}</button>
+          </div>
+        </div>
+      </div>
+      <textarea class="task-note-input" name="note" rows="2" maxlength="300" placeholder="הערה (לא חובה)" aria-label="הערה"
+        ${editing && task.note ? '' : 'hidden'}>${editing ? esc(task.note) : ''}</textarea>
+      ${editing && task.note ? '' : '<button type="button" class="text-btn" data-task-action="show-note">+ הוספת הערה</button>'}
+      <div class="task-form-actions">
+        ${editing ? '<button type="button" class="text-btn danger" data-task-action="delete">מחיקה</button>' : ''}
+        <button type="button" class="pomo-ghost" data-task-action="cancel">ביטול</button>
+        <button type="submit" class="pomo-main sm">שמירה</button>
+      </div>
+    </form>`;
 }
 
-function renderPomodoro(full = false) {
+function taskItemHTML(t) {
+  const isActive = t.id === pomo.state.activeTaskId;
+  const color = taskColor(t);
+  return `
+    <li class="task${isActive ? ' is-active' : ''}${t.done ? ' is-done' : ''}" data-task-id="${t.id}"${color ? ` style="--tc:${color}"` : ''}>
+      <button type="button" class="task-check" data-task-action="toggle" aria-pressed="${t.done}"
+        aria-label="${t.done ? 'סימון כלא הושלמה' : 'סימון כהושלמה'}: ${esc(t.title)}">${ICONS.check}</button>
+      <button type="button" class="task-main" data-task-action="select" aria-current="${isActive}">
+        <span class="task-title">${color ? '<i class="task-dot" aria-hidden="true"></i>' : ''}${esc(t.title)}</span>
+        ${t.note ? `<span class="task-note">${esc(t.note)}</span>` : ''}
+      </button>
+      <span class="task-count" aria-label="${t.act} מתוך ${t.est} סבבים">${t.act}<small>/${t.est}</small></span>
+      <button type="button" class="task-more" data-task-action="edit" aria-label="עריכת המשימה ${esc(t.title)}">${ICONS.more}</button>
+    </li>`;
+}
+
+// ---------- Timer page: rendering ----------
+function renderPomodoro() {
   if (!pomo.state) return;
   const s = pomo.state;
-  const exam = selectedExam();
   const after = pomo.settings.longBreakAfter;
   const done = Math.min(s.completedInCycle, after);
   const running = s.isRunning;
@@ -643,41 +759,39 @@ function renderPomodoro(full = false) {
   const modeIdx = POMO_MODES.findIndex((m) => m.key === s.mode);
   const modeLabel = POMO_MODES[modeIdx].label;
   const main = running ? ['pause', 'השהה'] : paused ? ['play', 'המשך'] : ['play', 'התחל'];
+  const accent = pomoAccent();
+  const task = activeTask();
+
+  timerView.style.setProperty('--pc', accent);
+  timerBtn.style.setProperty('--pc', accent);
+  timerBtn.dataset.running = String(running);
+  timerBtn.setAttribute('aria-label', running ? 'טיימר הלימוד (פועל)' : 'טיימר הלימוד');
+
+  const p = timerView.querySelector('[data-pomo]');
+  if (!p) return;
+  p.dataset.mode = s.mode;
+  p.dataset.state = running ? 'running' : paused ? 'paused' : 'idle';
+  p.querySelector('.pomo-modes').style.setProperty('--i', modeIdx);
+  p.querySelectorAll('[data-pomo-mode]').forEach((b) => {
+    const on = b.dataset.pomoMode === s.mode;
+    b.setAttribute('aria-selected', String(on));
+    b.tabIndex = on ? 0 : -1;
+  });
+  const btn = p.querySelector('[data-pomo-action="toggle"]');
+  btn.innerHTML = `${ICONS[main[0]]}<span>${main[1]}</span>`;
+  btn.setAttribute('aria-label', `${main[1]} טיימר ${modeLabel}`);
+
   const dots = Array.from({ length: after }, (_, i) => `<i class="${i < done ? 'on' : ''}"></i>`).join('');
   const cycleText = s.mode === 'focus'
-    ? `פומודורו ${Math.min(done + 1, after)} מתוך ${after}`
-    : `${modeLabel} · הושלמו ${done} מתוך ${after}`;
-  const stats = getPomodoroStats(exam?.id);
-  const options = full ? examOptionsHTML() : null;
+    ? `סבב ${Math.min(done + 1, after)} מתוך ${after} · זמן להתרכז!`
+    : `זמן להפסקה! · הושלמו ${done} מתוך ${after}`;
+  p.querySelector('[data-pomo-cycle]').innerHTML = `<span class="pomo-dots" aria-hidden="true">${dots}</span><span>${cycleText}</span>`;
+  p.querySelector('[data-pomo-now]').innerHTML = task && !task.done
+    ? `${s.mode === 'focus' ? 'עובדים על' : 'אחרי ההפסקה'}: <b>${esc(task.title)}</b>`
+    : '<span class="muted">בחרו משימה מהרשימה או הוסיפו משימה חדשה</span>';
 
-  pomoPanels().forEach((p) => {
-    p.style.setProperty('--pc', exam?.color ?? POMO_ACCENT);
-    p.dataset.mode = s.mode;
-    p.dataset.state = running ? 'running' : paused ? 'paused' : 'idle';
-    p.querySelector('.pomo-modes').style.setProperty('--i', modeIdx);
-    p.querySelectorAll('[data-pomo-mode]').forEach((b) => {
-      const on = b.dataset.pomoMode === s.mode;
-      b.setAttribute('aria-selected', String(on));
-      b.tabIndex = on ? 0 : -1;
-    });
-
-    const select = p.querySelector('[data-pomo-exam]');
-    if (options !== null) select.innerHTML = options;
-    select.value = exam?.id ?? '';
-    select.disabled = !select.options.length || !select.options[0].value;
-
-    const btn = p.querySelector('[data-pomo-action="toggle"]');
-    btn.innerHTML = `${ICONS[main[0]]}<span>${main[1]}</span>`;
-    btn.setAttribute('aria-label', `${main[1]} טיימר ${modeLabel}`);
-
-    p.querySelector('[data-pomo-cycle]').innerHTML = `<span class="pomo-dots" aria-hidden="true">${dots}</span><span>${cycleText}</span>`;
-    p.querySelector('[data-pomo-today]').innerHTML = `${stats.today.count}<small> פומודורו</small>`;
-    p.querySelector('[data-pomo-today-foot]').textContent = `${fmtStudy(stats.today.minutes)} ריכוז`;
-    p.querySelector('[data-pomo-exam-name]').textContent = exam?.name ?? 'לא נבחר מבחן';
-    p.querySelector('[data-pomo-exam-count]').innerHTML = `${stats.exam.count}<small> פומודורו</small>`;
-    p.querySelector('[data-pomo-exam-foot]').textContent = `${fmtStudy(stats.exam.minutes)} לימוד`;
-  });
   renderTime();
+  renderPomoStats();
 }
 
 // Cheap per-tick update: clock, progress bar and the browser tab title only
@@ -687,41 +801,67 @@ function renderTime() {
   const ms = remainingNow();
   const clock = fmtClock(ms);
   const pct = s.durationMs ? Math.min(100, Math.max(0, (1 - ms / s.durationMs) * 100)) : 0;
-  pomoPanels().forEach((p) => {
+  const p = timerView.querySelector('[data-pomo]');
+  if (p) {
     const t = p.querySelector('[data-pomo-time]');
     if (t.textContent !== clock) t.textContent = clock;
     p.querySelector('[data-pomo-bar]').style.setProperty('--p', `${pct}%`);
-  });
-  const label = s.mode === 'focus' ? (selectedExam()?.name ?? 'ריכוז') : 'הפסקה';
+  }
+  const label = s.mode === 'focus' ? (activeTask()?.title ?? 'זמן להתרכז') : 'הפסקה';
   document.title = s.isRunning ? `${clock} · ${label}` : BASE_TITLE;
+}
+
+function renderTasks() {
+  const list = timerView.querySelector('[data-task-list]');
+  if (!list) return;
+  list.innerHTML = pomo.tasks.map((t) => (taskForm === t.id ? `<li class="task-edit">${taskFormHTML(t)}</li>` : taskItemHTML(t))).join('');
+  timerView.querySelector('[data-task-new]').innerHTML = taskForm === 'new'
+    ? taskFormHTML(null)
+    : `<button type="button" class="add-task" data-task-action="add">${ICONS.plus}<span>הוספת משימה</span></button>`;
+  timerView.querySelector('[data-task-action="clear-done"]').hidden = !pomo.tasks.some((t) => t.done);
+
+  const est = tasksEstimate();
+  const foot = timerView.querySelector('[data-tasks-foot]');
+  foot.hidden = !pomo.tasks.length;
+  foot.innerHTML = est.left
+    ? `סבבים: <b>${est.act}/${est.est}</b><span class="sep">·</span>סיום משוער: <b>${est.finish}</b> (${(est.minutes / 60).toFixed(1)} שעות)`
+    : `סבבים: <b>${est.act}/${est.est}</b><span class="sep">·</span>כל המשימות הושלמו 🎉`;
+  renderPomodoro();
+}
+
+function renderPomoStats() {
+  const { today, week } = getPomodoroStats();
+  const set = (sel, html) => { const el = timerView.querySelector(sel); if (el) el.innerHTML = html; };
+  set('[data-stat-today]', `${today.count}<small> ${today.count === 1 ? 'סבב' : 'סבבים'}</small>`);
+  set('[data-stat-today-foot]', `${fmtStudy(today.minutes)} ריכוז`);
+  set('[data-stat-week]', `${week.count}<small> ${week.count === 1 ? 'סבב' : 'סבבים'}</small>`);
+  set('[data-stat-week-foot]', `${fmtStudy(week.minutes)} ריכוז`);
 }
 
 function renderStudyBadges() {
   document.querySelectorAll('[data-study]').forEach((el) => {
     const { exam } = getPomodoroStats(el.dataset.study);
     el.hidden = !exam.count;
-    el.innerHTML = exam.count ? `<span>זמן לימוד</span><b>${fmtStudy(exam.minutes)} · ${exam.count} פומודורו</b>` : '';
+    el.innerHTML = exam.count ? `<span>זמן לימוד</span><b>${fmtStudy(exam.minutes)} · ${rounds(exam.count)}</b>` : '';
   });
 }
 
 function flashPomodoro() {
-  pomoPanels().forEach((p) => {
-    p.classList.remove('pomo-done');
-    void p.offsetWidth;
-    p.classList.add('pomo-done');
-  });
+  const p = timerView.querySelector('[data-pomo]');
+  if (!p) return;
+  p.classList.remove('pomo-done');
+  void p.offsetWidth;
+  p.classList.add('pomo-done');
 }
 
-// When the board changes and nothing is in progress, follow the board's nearest exam
-function onBoardChangePomodoro(key) {
-  if (!pomo.state || pomoActive()) return;
-  const id = defaultExamFor(key);
-  if (id && id !== pomo.state.selectedExamId) selectPomodoroExam(id);
+function focusTaskForm() {
+  timerView.querySelector('[data-task-form] .task-input')?.focus();
 }
 
-// ---------- Pomodoro: settings dialog ----------
+// ---------- Settings dialog ----------
 const settingsDialog = document.getElementById('pomoSettings');
 let settingsTrigger = null;
+let settingsViaKeyboard = false;
 
 function pomodoroSettingsHTML() {
   const num = (key, label, suffix) => {
@@ -735,15 +875,15 @@ function pomodoroSettingsHTML() {
         </span>
       </label>`;
   };
-  const toggle = (key, label) => `
-      <label class="set-row">
-        <span>${label}</span>
-        <input type="checkbox" role="switch" class="switch" data-setting="${key}">
-      </label>`;
+  const toggle = (key, label, extra = '') => `
+      <div class="set-row">
+        <label for="set-${key}">${label}</label>
+        <span class="set-ctl">${extra}<input type="checkbox" role="switch" class="switch" id="set-${key}" data-setting="${key}"></span>
+      </div>`;
   return `
     <form method="dialog" class="modal-inner">
       <div class="panel-head">
-        <h2 id="pomoSettingsTitle">הגדרות פומודורו</h2>
+        <h2 id="pomoSettingsTitle">הגדרות הטיימר</h2>
         <button type="submit" class="icon-btn modal-x" aria-label="סגירת ההגדרות">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
@@ -752,12 +892,12 @@ function pomodoroSettingsHTML() {
         ${num('focusMinutes', 'זמן ריכוז', 'דקות')}
         ${num('shortBreakMinutes', 'הפסקה קצרה', 'דקות')}
         ${num('longBreakMinutes', 'הפסקה ארוכה', 'דקות')}
-        ${num('longBreakAfter', 'הפסקה ארוכה אחרי', 'פומודורו')}
+        ${num('longBreakAfter', 'הפסקה ארוכה אחרי', 'סבבים')}
       </div>
       <div class="set-group">
         ${toggle('autoStartBreak', 'התחלה אוטומטית של הפסקות')}
         ${toggle('autoStartFocus', 'התחלה אוטומטית של ריכוז')}
-        ${toggle('soundEnabled', 'צליל בסיום')}
+        ${toggle('soundEnabled', 'צליל בסיום', '<button type="button" class="text-btn" data-sound-test>השמעה</button>')}
         ${toggle('notificationsEnabled', 'התראה בסיום טיימר')}
       </div>
       <p class="set-hint" data-notify-hint hidden></p>
@@ -776,13 +916,13 @@ function fillSettingsForm() {
 function updatePomodoroSettings(next) {
   pomo.settings = sanitizeSettings(next);
   savePomodoroSettings();
-  // An untouched timer picks up a new length right away; a session in progress keeps its own
+  // An untouched timer picks up a new length right away; a round in progress keeps its own
   if (!pomoActive()) {
     pomo.state.durationMs = modeDuration(pomo.state.mode);
     pomo.state.remainingMs = pomo.state.durationMs;
     savePomodoroState();
   }
-  renderPomodoro();
+  renderTasks();
 }
 
 function readSettingsForm() {
@@ -812,9 +952,10 @@ async function enableNotifications(input) {
   readSettingsForm();
 }
 
-function openPomodoroSettings(trigger) {
+function openPomodoroSettings(trigger, viaKeyboard) {
   settingsTrigger = trigger;
-  settingsDialog.style.setProperty('--pc', selectedExam()?.color ?? POMO_ACCENT);
+  settingsViaKeyboard = viaKeyboard;
+  settingsDialog.style.setProperty('--pc', pomoAccent());
   settingsDialog.querySelector('[data-notify-hint]').hidden = true;
   fillSettingsForm();
   settingsDialog.showModal();
@@ -828,40 +969,109 @@ function initPomodoroSettings() {
     if (inp.dataset.setting === 'notificationsEnabled' && inp.checked) enableNotifications(inp);
     else readSettingsForm();
   });
+  settingsDialog.addEventListener('click', (ev) => {
+    if (ev.target === settingsDialog) settingsDialog.close();   // backdrop
+    if (ev.target.closest('[data-sound-test]')) playAlarm(true);
+  });
   settingsDialog.addEventListener('close', () => {
     readSettingsForm();
-    if (settingsTrigger?.isConnected) settingsTrigger.focus();
+    // Keyboard users get focus back on the gear; mouse users don't get a stray focus ring
+    if (settingsViaKeyboard && settingsTrigger?.isConnected) settingsTrigger.focus();
+    else settingsTrigger?.blur();
   });
-  // Clicking the backdrop closes the dialog
-  settingsDialog.addEventListener('click', (ev) => { if (ev.target === settingsDialog) settingsDialog.close(); });
 }
 
-// ---------- Pomodoro: events ----------
-document.addEventListener('click', (ev) => {
+// ---------- Views: exam boards ↔ timer page ----------
+const TIMER_HASH = '#timer';
+const timerBtn = document.getElementById('timerBtn');
+let view = location.hash === TIMER_HASH ? 'timer' : 'dashboard';
+
+function showView(next, boardKey = active) {
+  view = next;
+  const isTimer = next === 'timer';
+  document.querySelector('.board-tabs').hidden = isTimer;
+  boardsEl.hidden = isTimer;
+  timerView.hidden = !isTimer;
+  document.getElementById('pageTitle').textContent = isTimer ? 'זמן ללמוד' : 'לוח המבחנים שלי';
+  timerBtn.setAttribute('aria-pressed', String(isTimer));
+  timerView.querySelector('[data-back]')?.setAttribute('href', `#moed-${active ?? 'a'}`);
+  // The boards had no width while hidden: re-align the one being returned to
+  const key = MOEDS.some((m) => m.key === boardKey) ? boardKey : active;
+  if (!isTimer && key) showBoard(key, false);
+  scrollTo({ top: 0 });
+}
+const openTimerPage = () => { if (location.hash !== TIMER_HASH) location.hash = TIMER_HASH; else showView('timer'); };
+
+// ---------- Timer: events ----------
+timerBtn.addEventListener('click', () => {
+  if (view === 'timer') location.hash = `#moed-${active ?? 'a'}`;
+  else openTimerPage();
+});
+
+timerView.addEventListener('click', (ev) => {
   const action = ev.target.closest('[data-pomo-action]');
   const mode = ev.target.closest('[data-pomo-mode]');
-  const study = ev.target.closest('[data-study-exam]');
+  const taskAct = ev.target.closest('[data-task-action]');
+  const step = ev.target.closest('[data-step]');
   if (action) {
     const a = action.dataset.pomoAction;
     if (a === 'toggle') (pomo.state.isRunning ? pausePomodoro : startPomodoro)();
     else if (a === 'reset') resetPomodoro();
     else if (a === 'skip') skipPomodoro();
-    else if (a === 'settings') openPomodoroSettings(action);
+    else if (a === 'settings') openPomodoroSettings(action, ev.detail === 0);
   }
   if (mode) setPomodoroMode(mode.dataset.pomoMode);
-  if (study) {
-    // Pick the exam and bring the timer into view; the user still presses "התחל"
-    selectPomodoroExam(study.dataset.studyExam);
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    document.getElementById(`pomo-${active}`)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  if (step) {
+    const inp = step.closest('.stepper').querySelector('input');
+    inp.value = clampInt(Number(inp.value) + Number(step.dataset.step), [1, TASK_EST_MAX], 1);
+  }
+  if (taskAct) {
+    const a = taskAct.dataset.taskAction;
+    const id = taskAct.closest('[data-task-id]')?.dataset.taskId;
+    const form = taskAct.closest('[data-task-form]');
+    if (a === 'add') { taskForm = 'new'; renderTasks(); focusTaskForm(); }
+    else if (a === 'cancel') { taskForm = null; renderTasks(); }
+    else if (a === 'edit') { taskForm = id; renderTasks(); focusTaskForm(); }
+    else if (a === 'select') { setActiveTask(id); renderTasks(); }
+    else if (a === 'toggle') { toggleTaskDone(id); renderTasks(); }
+    else if (a === 'clear-done') { clearDoneTasks(); renderTasks(); }
+    else if (a === 'show-note') {
+      form.querySelector('.task-note-input').hidden = false;
+      taskAct.remove();
+      form.querySelector('.task-note-input').focus();
+    } else if (a === 'delete') {
+      deleteTask(form.dataset.taskForm);
+      taskForm = null;
+      renderTasks();
+    }
   }
 });
-document.addEventListener('change', (ev) => {
-  if (ev.target.matches('[data-pomo-exam]')) selectPomodoroExam(ev.target.value);
+
+timerView.addEventListener('submit', (ev) => {
+  const form = ev.target.closest('[data-task-form]');
+  if (!form) return;
+  ev.preventDefault();
+  const data = Object.fromEntries(new FormData(form));
+  if (!data.title?.trim()) return form.querySelector('.task-input').focus();
+  const target = form.dataset.taskForm;
+  if (target === 'new') addTask(data);
+  else updateTask(target, data);
+  taskForm = null;
+  renderTasks();
+  // Keep the flow going like Pomofocus: after adding, the "add" button is ready again
+  if (target === 'new') timerView.querySelector('[data-task-action="add"]')?.focus();
 });
-// Mode tabs: arrow keys move focus (RTL: ArrowLeft = next), Enter/Space activates
-document.addEventListener('keydown', (ev) => {
-  const tab = ev.target.closest?.('[data-pomo-mode]');
+
+timerView.addEventListener('keydown', (ev) => {
+  // Escape closes an open task form
+  if (ev.key === 'Escape' && taskForm !== null && ev.target.closest('[data-task-form]')) {
+    taskForm = null;
+    renderTasks();
+    timerView.querySelector('[data-task-action="add"]')?.focus();
+    return;
+  }
+  // Mode tabs: arrow keys move focus (RTL: ArrowLeft = next), Enter/Space activates
+  const tab = ev.target.closest('[data-pomo-mode]');
   if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
   ev.preventDefault();
   const tabs = [...tab.parentElement.querySelectorAll('[data-pomo-mode]')];
@@ -870,16 +1080,29 @@ document.addEventListener('keydown', (ev) => {
     : (i + (ev.key === 'ArrowLeft' ? 1 : -1) + tabs.length) % tabs.length;
   tabs[n].focus();
 });
-// Coming back to the page: settle a session that ended while we were away
+
+// "התחל ללמוד" on the exam cards
+document.addEventListener('click', (ev) => {
+  const study = ev.target.closest('[data-study-exam]');
+  if (study) studyForExam(study.dataset.studyExam);
+});
+
+// Coming back to the page: settle a round that ended while we were away
 document.addEventListener('visibilitychange', () => { if (!document.hidden && pomo.state) checkPomodoro(); });
 // Another tab changed the timer: adopt its state
 addEventListener('storage', (ev) => {
   if (!Object.values(POMO_KEYS).includes(ev.key)) return;
   loadPomodoroState();
   pomo.state.isRunning ? startTicking() : stopTicking();
-  renderPomodoro(true);
+  renderTasks();
   renderStudyBadges();
 });
+
+function initTimerPage() {
+  timerView.innerHTML = timerPageHTML();
+  initPomodoroSettings();
+  renderTasks();
+}
 
 // ---------- Events ----------
 document.addEventListener('click', (ev) => {
@@ -903,7 +1126,13 @@ tabsEl.addEventListener('keydown', (ev) => {
   showBoard(next.key);
   document.getElementById(`tab-${next.key}`).focus();
 });
-addEventListener('hashchange', () => showBoard(location.hash.replace('#moed-', '')));
+addEventListener('hashchange', () => {
+  if (location.hash === TIMER_HASH) return showView('timer');
+  // Read the target board before anything re-aligns the boards (that rewrites the hash)
+  const key = location.hash.replace('#moed-', '');
+  if (view === 'timer') showView('dashboard', key);
+  else showBoard(key);
+});
 
 // Theme toggle: follows system unless the user picked one
 const root = document.documentElement;
@@ -918,9 +1147,10 @@ document.getElementById('themeBtn').addEventListener('click', () => {
 });
 
 loadPomodoroState();
-initPomodoroSettings();
+initTimerPage();
 render(true);
-// Resume a running Pomodoro; one that ended while the page was closed is settled exactly once
+showView(view);
+// Resume a running timer; a round that ended while the page was closed is settled exactly once
 if (pomo.state.isRunning) { startTicking(); checkPomodoro(); }
 // Re-check every minute so the countdown flips right after midnight
 setInterval(render, 60000);

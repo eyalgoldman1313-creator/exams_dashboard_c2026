@@ -22,18 +22,27 @@
     <header class="top">
       <div>
         <p class="eyebrow">סמסטר קיץ 2026/27</p>
-        <h1>לוח המבחנים שלי</h1>
+        <h1 id="pageTitle">לוח המבחנים שלי</h1>
         <p class="today" id="today"></p>
       </div>
-      <button class="icon-btn" id="themeBtn" type="button" aria-label="החלפת מצב תצוגה" title="מצב בהיר / כהה">
-        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>
-        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></svg>
-      </button>
+      <div class="top-actions">
+        <button class="icon-btn timer-btn" id="timerBtn" type="button" aria-label="טיימר הלימוד" aria-pressed="false" title="טיימר לימוד">
+          <svg class="ico-timer" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13.5" r="7.5"/><path d="M12 9.5v4l2.5 2M9.5 2.5h5M18.5 6.5l1.5-1.5"/></svg>
+          <svg class="ico-board" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+          <span class="run-dot" aria-hidden="true"></span>
+        </button>
+        <button class="icon-btn" id="themeBtn" type="button" aria-label="החלפת מצב תצוגה" title="מצב בהיר / כהה">
+          <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>
+          <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></svg>
+        </button>
+      </div>
     </header>
 
     <nav class="board-tabs"><div class="tabs-track" id="tabs" role="tablist" aria-label="מועדים"></div></nav>
 
     <div class="boards" id="boards" aria-live="polite"></div>
+
+    <div class="timer-view" id="timerView" hidden></div>
 
     <footer class="foot">
       הספירה כוללת את היום ואינה כוללת את יום המבחן · מתעדכן אוטומטית בחצות (שעון ישראל)
