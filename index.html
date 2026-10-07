@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>לוח מבחנים · קיץ 2026/27</title>
+  <meta name="description" content="ספירה לאחור לכל מבחני סמסטר קיץ 2026/27" />
+  <meta name="theme-color" content="#0d0c16" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f6f5fb" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="מבחנים" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-blobs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <p class="eyebrow">סמסטר קיץ 2026/27</p>
+        <h1>לוח המבחנים שלי</h1>
+        <p class="today" id="today"></p>
+      </div>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="החלפת מצב תצוגה" title="מצב בהיר / כהה">
+        <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></svg>
+      </button>
+    </header>
+
+    <section class="hero" id="hero" aria-live="polite"></section>
+
+    <section class="stats" id="stats"></section>
+
+    <section class="panel timeline-panel">
+      <div class="panel-head">
+        <h2>ציר זמן</h2>
+        <div class="legend-hint"><span class="lg-dot"></span>מועד א׳ <span class="lg-dot hollow"></span>מועד ב׳</div>
+      </div>
+      <div class="timeline" id="timeline"></div>
+    </section>
+
+    <section class="controls">
+      <div class="seg" role="tablist" aria-label="תצוגה">
+        <button type="button" data-view="chrono" role="tab">לפי תאריך</button>
+        <button type="button" data-view="course" role="tab">לפי קורס</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="סינון מועד">
+        <button type="button" data-moed="all" role="tab">הכל</button>
+        <button type="button" data-moed="א" role="tab">מועד א׳</button>
+        <button type="button" data-moed="ב" role="tab">מועד ב׳</button>
+      </div>
+    </section>
+
+    <section id="list" class="list"></section>
+
+    <footer class="foot">
+      הספירה כוללת את היום ואינה כוללת את יום המבחן · מתעדכן אוטומטית בחצות (שעון ישראל)
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
