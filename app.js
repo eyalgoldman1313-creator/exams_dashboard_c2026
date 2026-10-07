@@ -503,7 +503,7 @@ function completePomodoro() {
   renderTasks();
   renderStudyBadges();
   if (!late) {
-    playAlarm();
+    startRinging(finished);
     notifyPomodoro(finished);
     flashPomodoro();
   }
@@ -615,9 +615,13 @@ function getAlarm() {
   }
   return alarm;
 }
+// The alarm loops from the end of a round until the user presses "איפוס".
+// Not persisted: after a refresh the browser wouldn't let it play anyway.
+let ringing = null;   // null | the mode that just finished ('focus' / 'short' / 'long')
+
 // Called from a user gesture (Start) so mobile browsers allow the alarm to play later
 function unlockAudio() {
-  if (!pomo.settings.soundEnabled || audioUnlocked) return;
+  if (!pomo.settings.soundEnabled || audioUnlocked || ringing) return;
   try {
     const a = getAlarm();
     a.muted = true;
@@ -625,13 +629,38 @@ function unlockAudio() {
       .catch(() => { a.muted = false; });
   } catch { /* no audio support */ }
 }
-function playAlarm(force = false) {
-  if (!force && !pomo.settings.soundEnabled) return;
+function startRinging(finished) {
+  if (!pomo.settings.soundEnabled) return;
+  ringing = finished;
   try {
     const a = getAlarm();
+    a.loop = true;
     a.muted = false;
     a.currentTime = 0;
-    a.play().catch(() => {});   // autoplay blocked: stay silent
+    a.play().catch(() => {});   // autoplay blocked: stay silent, the visual alert still shows
+  } catch { /* no audio support */ }
+  renderPomodoro();
+}
+function stopRinging() {
+  if (!ringing) return;
+  ringing = null;
+  try {
+    const a = getAlarm();
+    a.pause();
+    a.loop = false;
+    a.currentTime = 0;
+  } catch { /* no audio support */ }
+  renderPomodoro();
+}
+// "השמעה" in settings: a single play, never while the alarm is already ringing
+function previewAlarm() {
+  if (ringing) return;
+  try {
+    const a = getAlarm();
+    a.loop = false;
+    a.muted = false;
+    a.currentTime = 0;
+    a.play().catch(() => {});
   } catch { /* no audio support */ }
 }
 
@@ -673,6 +702,7 @@ function timerPageHTML() {
       <p class="pomo-cycle" data-pomo-cycle aria-live="polite"></p>
       <span class="progress pomo-progress" aria-hidden="true"><i data-pomo-bar></i></span>
       <p class="pomo-now" data-pomo-now></p>
+      <p class="pomo-alert" data-pomo-alert role="alert" hidden></p>
       <div class="pomo-controls">
         <button type="button" class="pomo-ghost" data-pomo-action="reset" aria-label="איפוס הטיימר">${ICONS.reset}<span>איפוס</span></button>
         <button type="button" class="pomo-main" data-pomo-action="toggle"></button>
@@ -765,7 +795,8 @@ function renderPomodoro() {
   timerView.style.setProperty('--pc', accent);
   timerBtn.style.setProperty('--pc', accent);
   timerBtn.dataset.running = String(running);
-  timerBtn.setAttribute('aria-label', running ? 'טיימר הלימוד (פועל)' : 'טיימר הלימוד');
+  timerBtn.dataset.ringing = String(!!ringing);
+  timerBtn.setAttribute('aria-label', ringing ? 'טיימר הלימוד (הזמן נגמר)' : running ? 'טיימר הלימוד (פועל)' : 'טיימר הלימוד');
 
   const p = timerView.querySelector('[data-pomo]');
   if (!p) return;
@@ -777,6 +808,13 @@ function renderPomodoro() {
     b.setAttribute('aria-selected', String(on));
     b.tabIndex = on ? 0 : -1;
   });
+  p.dataset.ringing = String(!!ringing);
+  const alertEl = p.querySelector('[data-pomo-alert]');
+  alertEl.hidden = !ringing;
+  alertEl.innerHTML = ringing
+    ? `<b>${ringing === 'focus' ? 'סבב הריכוז הסתיים!' : 'ההפסקה הסתיימה!'}</b> לחצו על איפוס כדי לעצור את הצלצול`
+    : '';
+  p.querySelector('[data-pomo-action="reset"]').setAttribute('aria-label', ringing ? 'איפוס – עצירת הצלצול' : 'איפוס הטיימר');
   const btn = p.querySelector('[data-pomo-action="toggle"]');
   btn.innerHTML = `${ICONS[main[0]]}<span>${main[1]}</span>`;
   btn.setAttribute('aria-label', `${main[1]} טיימר ${modeLabel}`);
@@ -808,7 +846,8 @@ function renderTime() {
     p.querySelector('[data-pomo-bar]').style.setProperty('--p', `${pct}%`);
   }
   const label = s.mode === 'focus' ? (activeTask()?.title ?? 'זמן להתרכז') : 'הפסקה';
-  document.title = s.isRunning ? `${clock} · ${label}` : BASE_TITLE;
+  document.title = s.isRunning ? `${clock} · ${label}`
+    : ringing ? `⏰ ${ringing === 'focus' ? 'סבב הריכוז הסתיים' : 'ההפסקה הסתיימה'}` : BASE_TITLE;
 }
 
 function renderTasks() {
@@ -916,6 +955,7 @@ function fillSettingsForm() {
 function updatePomodoroSettings(next) {
   pomo.settings = sanitizeSettings(next);
   savePomodoroSettings();
+  if (!pomo.settings.soundEnabled) stopRinging();
   // An untouched timer picks up a new length right away; a round in progress keeps its own
   if (!pomoActive()) {
     pomo.state.durationMs = modeDuration(pomo.state.mode);
@@ -971,7 +1011,7 @@ function initPomodoroSettings() {
   });
   settingsDialog.addEventListener('click', (ev) => {
     if (ev.target === settingsDialog) settingsDialog.close();   // backdrop
-    if (ev.target.closest('[data-sound-test]')) playAlarm(true);
+    if (ev.target.closest('[data-sound-test]')) previewAlarm();
   });
   settingsDialog.addEventListener('close', () => {
     readSettingsForm();
@@ -1016,7 +1056,7 @@ timerView.addEventListener('click', (ev) => {
   if (action) {
     const a = action.dataset.pomoAction;
     if (a === 'toggle') (pomo.state.isRunning ? pausePomodoro : startPomodoro)();
-    else if (a === 'reset') resetPomodoro();
+    else if (a === 'reset') ringing ? stopRinging() : resetPomodoro();
     else if (a === 'skip') skipPomodoro();
     else if (a === 'settings') openPomodoroSettings(action, ev.detail === 0);
   }

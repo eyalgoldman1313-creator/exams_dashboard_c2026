@@ -378,6 +378,24 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .text-btn:hover { color: var(--text); }
 .text-btn.danger { color: #e5484d; }
 
+/* Time's up: the alarm loops until "איפוס" is pressed */
+.pomo-alert {
+  width: 100%; max-width: 420px; padding: 10px 14px; border-radius: 14px; text-align: center;
+  background: color-mix(in srgb, var(--pc) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--pc) 30%, var(--border));
+  color: var(--muted); font-size: 0.9rem; line-height: 1.45;
+}
+.pomo-alert b { display: block; color: var(--text); font-size: 1rem; }
+.pomo[data-ringing="true"] [data-pomo-action="reset"] {
+  color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt));
+  border-color: color-mix(in srgb, var(--pc) 60%, var(--border));
+  animation: ringPulse 1.4s ease-out infinite;
+}
+.timer-btn[data-ringing="true"] .run-dot { opacity: 1; transform: scale(1); animation: ringPulse 1.4s ease-out infinite; }
+@keyframes ringPulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--pc) 50%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--pc) 0%, transparent); }
+}
+
 /* Short completion feedback */
 .pomo-done { animation: pomoDone 1.2s ease; }
 @keyframes pomoDone {
