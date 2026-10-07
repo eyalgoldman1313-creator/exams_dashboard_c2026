@@ -311,14 +311,14 @@ const POMO_MODES = [
 ];
 // Accent per mode, taken from the dashboard's palette (focus follows the task's course when it has one)
 const MODE_ACCENT = { focus: '#7c5cff', short: '#14b8a6', long: '#2f8cff' };
-const POMO_LIMITS = { focusMinutes: [1, 90], shortBreakMinutes: [1, 30], longBreakMinutes: [1, 60], longBreakAfter: [2, 8] };
+const POMO_LIMITS = { focusMinutes: [1, 90], shortBreakMinutes: [1, 30], longBreakMinutes: [1, 60], longBreakAfter: [2, 8], alarmMaxMinutes: [1, 10] };
 const POMO_FLAGS = ['autoStartBreak', 'autoStartFocus', 'soundEnabled', 'notificationsEnabled'];
 const DEFAULT_SETTINGS = {
-  focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, longBreakAfter: 4,
+  focusMinutes: 25, shortBreakMinutes: 5, longBreakMinutes: 15, longBreakAfter: 4, alarmMaxMinutes: 2,
   autoStartBreak: false, autoStartFocus: false, soundEnabled: true, notificationsEnabled: false,
 };
 const TASK_EST_MAX = 20;
-const ALARM_SRC = 'sounds/timer-end.wav';
+const ALARM_SRC = 'sounds/timer-end.mp3';
 const BASE_TITLE = document.title;
 
 const pomo = { settings: { ...DEFAULT_SETTINGS }, state: null, sessions: [], tasks: [] };
@@ -612,12 +612,26 @@ function getAlarm() {
   if (!alarm) {
     alarm = new Audio(ALARM_SRC);
     alarm.preload = 'auto';
+    // Backup for the auto-stop: timers are throttled in background tabs, a playing audio isn't
+    alarm.addEventListener('timeupdate', () => { if (ringing && Date.now() >= ringStopsAt()) stopRinging(); });
   }
   return alarm;
 }
-// The alarm loops from the end of a round until the user presses "איפוס".
+// The alarm loops from the end of a round until the user presses "איפוס",
+// or stops on its own after `alarmMaxMinutes` (2 by default).
 // Not persisted: after a refresh the browser wouldn't let it play anyway.
 let ringing = null;   // null | the mode that just finished ('focus' / 'short' / 'long')
+let ringStartedAt = 0;
+let ringStopTimer = null;
+const ringStopsAt = () => ringStartedAt + pomo.settings.alarmMaxMinutes * 60000;
+
+function scheduleRingStop() {
+  clearTimeout(ringStopTimer);
+  if (!ringing) return;
+  const left = ringStopsAt() - Date.now();
+  if (left <= 0) return stopRinging();
+  ringStopTimer = setTimeout(stopRinging, left);
+}
 
 // Called from a user gesture (Start) so mobile browsers allow the alarm to play later
 function unlockAudio() {
@@ -632,6 +646,8 @@ function unlockAudio() {
 function startRinging(finished) {
   if (!pomo.settings.soundEnabled) return;
   ringing = finished;
+  ringStartedAt = Date.now();
+  scheduleRingStop();
   try {
     const a = getAlarm();
     a.loop = true;
@@ -644,6 +660,7 @@ function startRinging(finished) {
 function stopRinging() {
   if (!ringing) return;
   ringing = null;
+  clearTimeout(ringStopTimer);
   try {
     const a = getAlarm();
     a.pause();
@@ -812,7 +829,7 @@ function renderPomodoro() {
   const alertEl = p.querySelector('[data-pomo-alert]');
   alertEl.hidden = !ringing;
   alertEl.innerHTML = ringing
-    ? `<b>${ringing === 'focus' ? 'סבב הריכוז הסתיים!' : 'ההפסקה הסתיימה!'}</b> לחצו על איפוס כדי לעצור את הצלצול`
+    ? `<b>${ringing === 'focus' ? 'סבב הריכוז הסתיים!' : 'ההפסקה הסתיימה!'}</b> לחצו על איפוס כדי לעצור את הצלצול (ייעצר לבד אחרי ${pomo.settings.alarmMaxMinutes === 1 ? 'דקה' : `${pomo.settings.alarmMaxMinutes} דקות`})`
     : '';
   p.querySelector('[data-pomo-action="reset"]').setAttribute('aria-label', ringing ? 'איפוס – עצירת הצלצול' : 'איפוס הטיימר');
   const btn = p.querySelector('[data-pomo-action="toggle"]');
@@ -937,6 +954,7 @@ function pomodoroSettingsHTML() {
         ${toggle('autoStartBreak', 'התחלה אוטומטית של הפסקות')}
         ${toggle('autoStartFocus', 'התחלה אוטומטית של ריכוז')}
         ${toggle('soundEnabled', 'צליל בסיום', '<button type="button" class="text-btn" data-sound-test>השמעה</button>')}
+        ${num('alarmMaxMinutes', 'עצירת הצלצול אחרי', 'דקות')}
         ${toggle('notificationsEnabled', 'התראה בסיום טיימר')}
       </div>
       <p class="set-hint" data-notify-hint hidden></p>
@@ -956,6 +974,7 @@ function updatePomodoroSettings(next) {
   pomo.settings = sanitizeSettings(next);
   savePomodoroSettings();
   if (!pomo.settings.soundEnabled) stopRinging();
+  else scheduleRingStop();   // a new limit applies to an alarm that is already ringing
   // An untouched timer picks up a new length right away; a round in progress keeps its own
   if (!pomoActive()) {
     pomo.state.durationMs = modeDuration(pomo.state.mode);
