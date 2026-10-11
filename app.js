@@ -1,11 +1,11 @@
 // ---------- Data (from "exams schedule.xlsx") ----------
 const COURSES = {
-  instruments: { name: 'מכשירים פיננסיים', lecturer: 'אלי פאר / שלמה דאובר', color: '#7c5cff' },
-  advAcct:     { name: 'חשבונאות פיננסית מתקדמת ב׳', lecturer: 'אלי פאר / שלמה דאובר', color: '#2f8cff' },
-  finReview:   { name: 'פיננסית - חזרות והשלמות', lecturer: 'רונן קליינמן', color: '#14b8a6' },
-  itAudit:     { name: 'ביקורת מערכות מידע ממוחשבות בשילוב AI', lecturer: 'אלון כהן', color: '#f5a524' },
-  advAudit:    { name: 'ביקורת מתקדמת ב׳', lecturer: 'אלון כהן', color: '#ff5d73' },
-  auditBasics: { name: 'יסודות הביקורת - חזרות והשלמות', lecturer: 'אלון כהן', color: '#84cc16' },
+  instruments: { name: 'מכשירים פיננסיים', lecturer: 'אלי פאר / שלמה דאובר', short: 'מכשירים פיננסיים', color: '#7c5cff' },
+  advAcct:     { name: 'חשבונאות פיננסית מתקדמת ב׳', lecturer: 'אלי פאר / שלמה דאובר', short: 'חשבונאות מתקדמת ב׳', color: '#2f8cff' },
+  finReview:   { name: 'פיננסית - חזרות והשלמות', lecturer: 'רונן קליינמן', short: 'פיננסית – חזרות', color: '#14b8a6' },
+  itAudit:     { name: 'ביקורת מערכות מידע ממוחשבות בשילוב AI', lecturer: 'אלון כהן', short: 'ביקורת מערכות מידע', color: '#f5a524' },
+  advAudit:    { name: 'ביקורת מתקדמת ב׳', lecturer: 'אלון כהן', short: 'ביקורת מתקדמת ב׳', color: '#ff5d73' },
+  auditBasics: { name: 'יסודות הביקורת - חזרות והשלמות', lecturer: 'אלון כהן', short: 'יסודות הביקורת', color: '#84cc16' },
 };
 
 const EXAMS = [
@@ -42,6 +42,7 @@ const fmtDate = fmt({ day: 'numeric', month: 'long' });
 const fmtShortDate = fmt({ day: 'numeric', month: 'short' });
 const fmtWeekday = fmt({ weekday: 'long' });
 const fmtShortMonth = fmt({ month: 'short' });
+const fmtWeekdayShort = fmt({ weekday: 'short' });
 
 function weeksText(d) {
   if (d < 7) return '';
@@ -131,33 +132,59 @@ function statsHTML(exams) {
 
 function timelineHTML(m, exams, today) {
   const t = toUTC(today);
-  const start = Math.min(t, toUTC(exams[0].date)) - 4 * DAY;
-  const end = toUTC(exams.at(-1).date) + 4 * DAY;
+  const first = toUTC(exams[0].date);
+  const last = toUTC(exams.at(-1).date);
+  // The axis spans this moed's exams; "today" is drawn on it only when it falls inside
+  const pad = Math.max(3 * DAY, (last - first) * 0.07);
+  const start = first - pad;
+  const end = last + pad;
   const pct = (x) => ((x - start) / (end - start)) * 100;
+  const next = exams.find((e) => e.d >= 0);
+  const when = (d) => (d > 1 ? `עוד ${d} ימים` : d === 1 ? 'מחר' : d === 0 ? 'היום!' : 'הסתיים ✓');
+  const dateText = (iso) => `${fmtWeekdayShort.format(toUTC(iso))}, ${fmtShortDate.format(toUTC(iso))}`;
 
-  let months = '';
-  const s = new Date(start);
-  for (let mo = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 1)); mo.getTime() < end; mo.setUTCMonth(mo.getUTCMonth() + 1)) {
-    months += `<span class="tick" style="inset-inline-start:${pct(mo.getTime())}%"><b>${fmtShortMonth.format(mo)}</b></span>`;
-  }
-  const todayMark = t <= end ? `<span class="tl-today" style="inset-inline-start:${pct(t)}%"><b>היום</b></span>` : '';
-  const dots = exams.map((e, i) => `
-    <button type="button" class="tl-dot ${e.d < 0 ? 'past' : ''} ${i % 2 ? 'down' : 'up'}"
-      style="inset-inline-start:${pct(toUTC(e.date))}%; --c:${e.color}"
-      data-target="${e.id}" title="${esc(e.name)} · ${fmtDate.format(toUTC(e.date))}"
-      aria-label="${esc(e.name)}, ${e.d >= 0 ? `בעוד ${e.d} ${unit(e.d)}` : 'הסתיים'}">
-      <span class="tl-label">${e.d > 0 ? e.d : e.d === 0 ? '!' : '✓'}</span>
-    </button>`).join('');
+  const items = exams.map((e, i) => {
+    const pos = pct(toUTC(e.date));
+    const prev = i ? pct(toUTC(exams[i - 1].date)) : pos;
+    const edge = pos < 12 ? ' edge-start' : pos > 88 ? ' edge-end' : '';
+    const state = e.d < 0 ? ' is-past' : e === next ? ' is-next' : '';
+    const label = `${e.name}, ${moedLabel(e.moed)}, ${fmtWeekday.format(toUTC(e.date))} ${fmtDate.format(toUTC(e.date))}, `
+      + `${e.d > 1 ? `בעוד ${e.d} ימים` : e.d === 1 ? 'מחר' : e.d === 0 ? 'היום' : 'הסתיים'}${e === next ? ', המבחן הבא' : ''}. מעבר לכרטיס המבחן`;
+    return `
+      <li class="tl-item ${i % 2 ? 'down' : 'up'}${edge}${state}" style="--pos:${pos}%; --prev:${prev}%; --c:${e.color}">
+        ${i ? `<span class="tl-gap"><b>${e.gap}</b> ימים<span class="tl-gap-long"> ללמידה מהמבחן הקודם</span></span>` : ''}
+        <button type="button" class="tl-mark" data-target="${e.id}" aria-label="${esc(label)}">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-card" aria-hidden="true">
+            ${e === next ? '<span class="tl-next">הבא</span>' : ''}
+            <span class="tl-name">${esc(e.short)}</span>
+            <span class="tl-date">${dateText(e.date)}</span>
+            <span class="tl-days">${when(e.d)}</span>
+          </span>
+        </button>
+      </li>`;
+  });
+
+  // "Today" goes into the list at its chronological place (it reads naturally in the vertical layout too)
+  const before = t < start, after = t > end;
+  const nowText = before ? ` · עוד ${daysUntil(exams[0].date, today)} ימים למבחן הראשון` : after ? ' · המועד הסתיים' : '';
+  const nowPos = before ? 0 : after ? 100 : pct(t);
+  const nowItem = `
+      <li class="tl-now${before ? ' before' : after ? ' after' : ''}" style="--pos:${nowPos}%">
+        <span class="tl-now-chip">היום · ${fmtShortDate.format(t)}${nowText}</span>
+      </li>`;
+  const pastCount = exams.filter((e) => e.d < 0).length;
+  items.splice(pastCount, 0, nowItem);
 
   return `
-    <section class="panel">
+    <section class="panel" aria-labelledby="tl-title-${m.key}">
       <div class="panel-head">
-        <h2>ציר זמן · ${m.title}</h2>
-        <span class="panel-note">${fmtShortDate.format(toUTC(exams[0].date))} – ${fmtShortDate.format(toUTC(exams.at(-1).date))}</span>
+        <h2 id="tl-title-${m.key}">ציר זמן · ${m.title}</h2>
+        <span class="panel-note">${fmtShortDate.format(first)} – ${fmtShortDate.format(last)} · בין המבחנים: ימי למידה</span>
       </div>
       <div class="timeline">
-        <div class="tl-track"><span class="tl-fill" style="width:${Math.max(0, Math.min(100, pct(t)))}%"></span></div>
-        ${months}${todayMark}${dots}
+        <div class="tl-track" aria-hidden="true"><span class="tl-fill" style="width:${nowPos}%"></span></div>
+        <ol class="tl-list" aria-label="מבחני ${m.title} לפי סדר">${items.join('')}</ol>
       </div>
     </section>`;
 }
@@ -1166,7 +1193,7 @@ function initTimerPage() {
 // ---------- Events ----------
 document.addEventListener('click', (ev) => {
   const tab = ev.target.closest('[data-tab]');
-  const dot = ev.target.closest('.tl-dot');
+  const dot = ev.target.closest('.tl-mark');
   if (tab) showBoard(tab.dataset.tab);
   if (dot) {
     const target = document.getElementById(dot.dataset.target);
