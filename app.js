@@ -1,7 +1,7 @@
 // ---------- Data (from "exams schedule.xlsx") ----------
 const COURSES = {
   instruments: { name: 'מכשירים פיננסיים', lecturer: 'אלי פאר / שלמה דאובר', short: 'מכשירים פיננסיים', color: '#7c5cff' },
-  advAcct:     { name: 'חשבונאות פיננסית מתקדמת ב׳', lecturer: 'אלי פאר / שלמה דאובר', short: 'חשבונאות מתקדמת ב׳', color: '#2f8cff' },
+  advAcct:     { name: 'חשבונאות פיננסית מתקדמת ב׳', lecturer: 'אלי פאר / שלמה דאובר', short: 'פיננסית מתקדמת ב׳', color: '#2f8cff' },
   finReview:   { name: 'פיננסית - חזרות והשלמות', lecturer: 'רונן קליינמן', short: 'פיננסית – חזרות', color: '#14b8a6' },
   itAudit:     { name: 'ביקורת מערכות מידע ממוחשבות בשילוב AI', lecturer: 'אלון כהן', short: 'ביקורת מערכות מידע', color: '#f5a524' },
   advAudit:    { name: 'ביקורת מתקדמת ב׳', lecturer: 'אלון כהן', short: 'ביקורת מתקדמת ב׳', color: '#ff5d73' },
