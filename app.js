@@ -647,7 +647,7 @@ function getAlarm() {
 // The alarm loops from the end of a round until the user presses "איפוס",
 // or stops on its own after `alarmMaxMinutes` (2 by default).
 // Not persisted: after a refresh the browser wouldn't let it play anyway.
-let ringing = null;   // null | the mode that just finished ('focus' / 'short' / 'long')
+let ringing = null;   // null | what just finished: 'focus' / 'short' / 'long' / 'countdown'
 let ringStartedAt = 0;
 let ringStopTimer = null;
 const ringStopsAt = () => ringStartedAt + pomo.settings.alarmMaxMinutes * 60000;
@@ -683,6 +683,7 @@ function startRinging(finished) {
     a.play().catch(() => {});   // autoplay blocked: stay silent, the visual alert still shows
   } catch { /* no audio support */ }
   renderPomodoro();
+  renderCountdown();
 }
 function stopRinging() {
   if (!ringing) return;
@@ -695,6 +696,7 @@ function stopRinging() {
     a.currentTime = 0;
   } catch { /* no audio support */ }
   renderPomodoro();
+  renderCountdown();
 }
 // "השמעה" in settings: a single play, never while the alarm is already ringing
 function previewAlarm() {
@@ -735,7 +737,33 @@ function timerPageHTML() {
   return `
     <a class="back-link" href="#moed-a" data-back>${ICONS.back}<span>חזרה ללוח המבחנים</span></a>
 
-    <section class="panel pomo" data-pomo aria-label="טיימר">
+    <section class="panel cd" data-cd aria-labelledby="cdTitle">
+      <div class="panel-head">
+        <h2 id="cdTitle">טיימר</h2>
+        <span class="panel-note">ספירה לאחור</span>
+      </div>
+      <div class="cd-body">
+        <label class="cd-set">
+          <span class="stat-label">כמה דקות?</span>
+          <span class="stepper">
+            <input class="task-num" type="number" inputmode="numeric" min="${CD_LIMITS[0]}" max="${CD_LIMITS[1]}" step="1" data-cd-minutes aria-label="משך הטיימר בדקות">
+            <button type="button" class="step-btn" data-cd-step="1" aria-label="דקה נוספת">${ICONS.plus}</button>
+            <button type="button" class="step-btn" data-cd-step="-1" aria-label="דקה אחת פחות">${ICONS.minus}</button>
+          </span>
+        </label>
+        <div class="cd-clock">
+          <div class="cd-time" role="timer" aria-label="זמן שנותר בטיימר" data-cd-time>10:00</div>
+          <span class="progress cd-progress" aria-hidden="true"><i data-cd-bar></i></span>
+        </div>
+      </div>
+      <p class="pomo-alert" data-cd-alert role="alert" hidden></p>
+      <div class="pomo-controls">
+        <button type="button" class="pomo-ghost" data-cd-action="reset" aria-label="איפוס הטיימר">${ICONS.reset}<span>איפוס</span></button>
+        <button type="button" class="pomo-main" data-cd-action="toggle"></button>
+      </div>
+    </section>
+
+    <section class="panel pomo" data-pomo aria-label="טיימר פומודורו">
       <div class="pomo-top">
         <div class="pomo-modes" role="tablist" aria-label="מצב טיימר">
           ${POMO_MODES.map((md) => `<button type="button" role="tab" class="pomo-mode" data-pomo-mode="${md.key}">${md.label}</button>`).join('')}
@@ -838,9 +866,8 @@ function renderPomodoro() {
 
   timerView.style.setProperty('--pc', accent);
   timerBtn.style.setProperty('--pc', accent);
-  timerBtn.dataset.running = String(running);
-  timerBtn.dataset.ringing = String(!!ringing);
-  timerBtn.setAttribute('aria-label', ringing ? 'טיימר הלימוד (הזמן נגמר)' : running ? 'טיימר הלימוד (פועל)' : 'טיימר הלימוד');
+  renderTimerBtn();
+  const ringing = pomoRinging();
 
   const p = timerView.querySelector('[data-pomo]');
   if (!p) return;
@@ -890,8 +917,10 @@ function renderTime() {
     p.querySelector('[data-pomo-bar]').style.setProperty('--p', `${pct}%`);
   }
   const label = s.mode === 'focus' ? (activeTask()?.title ?? 'זמן להתרכז') : 'הפסקה';
+  const ringText = { focus: 'סבב הריכוז הסתיים', short: 'ההפסקה הסתיימה', long: 'ההפסקה הסתיימה', countdown: 'הטיימר הסתיים' };
   document.title = s.isRunning ? `${clock} · ${label}`
-    : ringing ? `⏰ ${ringing === 'focus' ? 'סבב הריכוז הסתיים' : 'ההפסקה הסתיימה'}` : BASE_TITLE;
+    : cd?.isRunning ? `${fmtClock(cdRemaining())} · טיימר`
+    : ringing ? `⏰ ${ringText[ringing]}` : BASE_TITLE;
 }
 
 function renderTasks() {
@@ -940,6 +969,173 @@ function flashPomodoro() {
 function focusTaskForm() {
   timerView.querySelector('[data-task-form] .task-input')?.focus();
 }
+
+// ---------- Countdown ("טיימר") ----------
+// A plain countdown above the Pomodoro. Own state, same endTime-based timing and the same alarm.
+const CD_KEY = 'countdown-state';
+const CD_LIMITS = [1, 600];
+let cd = null;
+let cdTick = null;
+
+const pomoRinging = () => (ringing && ringing !== 'countdown' ? ringing : null);
+const cdRemaining = () => (cd.isRunning ? Math.max(0, cd.endTime - Date.now()) : cd.remainingMs);
+const cdActive = () => cd.isRunning || cd.remainingMs < cd.durationMs;
+
+function loadCountdown() {
+  const s = store.getJSON(CD_KEY, {});
+  const minutes = clampInt(s.minutes, CD_LIMITS, 10);
+  const durationMs = Number.isFinite(s.durationMs) && s.durationMs > 0 ? s.durationMs : minutes * 60000;
+  const isRunning = s.isRunning === true && Number.isFinite(s.endTime);
+  cd = {
+    minutes, durationMs, isRunning,
+    endTime: isRunning ? s.endTime : null,
+    remainingMs: Number.isFinite(s.remainingMs) ? Math.min(Math.max(0, s.remainingMs), durationMs) : durationMs,
+  };
+}
+const saveCountdown = () => store.setJSON(CD_KEY, cd);
+
+function setCountdownMinutes(min) {
+  if (cdActive()) return;   // the length is locked while a countdown is in progress
+  cd.minutes = clampInt(min, CD_LIMITS, cd.minutes);
+  cd.durationMs = cd.minutes * 60000;
+  cd.remainingMs = cd.durationMs;
+  saveCountdown();
+  renderCountdown();
+}
+
+function startCountdown() {
+  if (cd.isRunning) return;
+  if (ringing === 'countdown') stopRinging();
+  if (cd.remainingMs <= 0) cd.remainingMs = cd.durationMs;
+  cd.isRunning = true;
+  cd.endTime = Date.now() + cd.remainingMs;
+  saveCountdown();
+  unlockAudio();
+  if (!cdTick) cdTick = setInterval(checkCountdown, 250);
+  renderCountdown();
+}
+
+function pauseCountdown() {
+  if (!cd.isRunning) return;
+  cd.remainingMs = Math.max(0, cd.endTime - Date.now());
+  cd.isRunning = false;
+  cd.endTime = null;
+  saveCountdown();
+  renderCountdown();
+}
+
+// Reset silences a ringing countdown first; otherwise it returns to the full length
+function resetCountdown() {
+  if (ringing === 'countdown') return stopRinging();
+  cd.isRunning = false;
+  cd.endTime = null;
+  cd.remainingMs = cd.durationMs;
+  saveCountdown();
+  renderCountdown();
+}
+
+function checkCountdown() {
+  if (!cd.isRunning) { clearInterval(cdTick); cdTick = null; return renderCountdown(); }
+  if (Date.now() < cd.endTime) return renderCountdownTime();
+  // Finished: settle once; ring only if it ended moments ago (not while the page was closed)
+  const late = Date.now() - cd.endTime > 60000;
+  cd.isRunning = false;
+  cd.endTime = null;
+  cd.remainingMs = cd.durationMs;
+  saveCountdown();
+  clearInterval(cdTick);
+  cdTick = null;
+  renderCountdown();
+  if (!late) {
+    startRinging('countdown');
+    if (pomo.settings.notificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
+      try { new Notification('הטיימר הסתיים', { body: `עברו ${cd.minutes} דקות.`, lang: 'he', dir: 'rtl', tag: 'countdown' }); } catch { /* no notifications */ }
+    }
+    const p = timerView.querySelector('[data-cd]');
+    if (p) { p.classList.remove('pomo-done'); void p.offsetWidth; p.classList.add('pomo-done'); }
+  }
+}
+
+function renderTimerBtn() {
+  const running = pomo.state.isRunning || !!cd?.isRunning;
+  timerBtn.dataset.running = String(running);
+  timerBtn.dataset.ringing = String(!!ringing);
+  timerBtn.setAttribute('aria-label', ringing ? 'טיימר הלימוד (הזמן נגמר)' : running ? 'טיימר הלימוד (פועל)' : 'טיימר הלימוד');
+}
+
+function renderCountdown() {
+  if (!cd || !pomo.state) return;
+  renderTimerBtn();
+  const p = timerView.querySelector('[data-cd]');
+  if (!p) return;
+  const isRinging = ringing === 'countdown';
+  const paused = !cd.isRunning && cd.remainingMs < cd.durationMs;
+  p.dataset.state = cd.isRunning ? 'running' : paused ? 'paused' : 'idle';
+  p.dataset.ringing = String(isRinging);
+
+  const input = p.querySelector('[data-cd-minutes]');
+  if (document.activeElement !== input) input.value = cd.minutes;
+  const locked = cdActive();
+  input.disabled = locked;
+  p.querySelectorAll('[data-cd-step]').forEach((b) => { b.disabled = locked; });
+
+  const main = cd.isRunning ? ['pause', 'השהה'] : paused ? ['play', 'המשך'] : ['play', 'התחל'];
+  const btn = p.querySelector('[data-cd-action="toggle"]');
+  btn.innerHTML = `${ICONS[main[0]]}<span>${main[1]}</span>`;
+  btn.setAttribute('aria-label', `${main[1]} טיימר ${cd.minutes} דקות`);
+  p.querySelector('[data-cd-action="reset"]').setAttribute('aria-label', isRinging ? 'איפוס – עצירת הצלצול' : 'איפוס הטיימר');
+
+  const alertEl = p.querySelector('[data-cd-alert]');
+  alertEl.hidden = !isRinging;
+  alertEl.innerHTML = isRinging
+    ? `<b>הטיימר הסתיים!</b> לחצו על איפוס כדי לעצור את הצלצול (ייעצר לבד אחרי ${pomo.settings.alarmMaxMinutes === 1 ? 'דקה' : `${pomo.settings.alarmMaxMinutes} דקות`})`
+    : '';
+  renderCountdownTime();
+}
+
+function renderCountdownTime() {
+  const p = timerView.querySelector('[data-cd]');
+  if (!p || !cd) return;
+  const ms = cdRemaining();
+  const total = Math.ceil(ms / 1000);
+  // Hours appear only for countdowns of an hour or more
+  const clock = total >= 3600
+    ? `${Math.floor(total / 3600)}:${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+    : fmtClock(ms);
+  const t = p.querySelector('[data-cd-time]');
+  if (t.textContent !== clock) t.textContent = clock;
+  const pct = cd.durationMs ? Math.min(100, Math.max(0, (1 - ms / cd.durationMs) * 100)) : 0;
+  p.querySelector('[data-cd-bar]').style.setProperty('--p', `${pct}%`);
+  renderTime();   // keeps the tab title in sync
+}
+
+timerView.addEventListener('click', (ev) => {
+  const act = ev.target.closest('[data-cd-action]');
+  const step = ev.target.closest('[data-cd-step]');
+  if (act) {
+    if (act.dataset.cdAction === 'toggle') (cd.isRunning ? pauseCountdown : startCountdown)();
+    else resetCountdown();
+  }
+  if (step) setCountdownMinutes(cd.minutes + Number(step.dataset.cdStep));
+});
+timerView.addEventListener('change', (ev) => {
+  if (ev.target.matches('[data-cd-minutes]')) setCountdownMinutes(ev.target.value);
+});
+timerView.addEventListener('keydown', (ev) => {
+  // Enter in the minutes field starts the countdown
+  if (ev.key === 'Enter' && ev.target.matches('[data-cd-minutes]')) {
+    ev.preventDefault();
+    setCountdownMinutes(ev.target.value);
+    startCountdown();
+  }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && cd?.isRunning) checkCountdown(); });
+addEventListener('storage', (ev) => {
+  if (ev.key !== CD_KEY) return;
+  loadCountdown();
+  if (cd.isRunning && !cdTick) cdTick = setInterval(checkCountdown, 250);
+  renderCountdown();
+});
 
 // ---------- Settings dialog ----------
 const settingsDialog = document.getElementById('pomoSettings');
@@ -1102,7 +1298,7 @@ timerView.addEventListener('click', (ev) => {
   if (action) {
     const a = action.dataset.pomoAction;
     if (a === 'toggle') (pomo.state.isRunning ? pausePomodoro : startPomodoro)();
-    else if (a === 'reset') ringing ? stopRinging() : resetPomodoro();
+    else if (a === 'reset') pomoRinging() ? stopRinging() : resetPomodoro();
     else if (a === 'skip') skipPomodoro();
     else if (a === 'settings') openPomodoroSettings(action, ev.detail === 0);
   }
@@ -1185,6 +1381,7 @@ addEventListener('storage', (ev) => {
 });
 
 function initTimerPage() {
+  loadCountdown();
   timerView.innerHTML = timerPageHTML();
   initPomodoroSettings();
   renderTasks();
@@ -1238,6 +1435,9 @@ render(true);
 showView(view);
 // Resume a running timer; a round that ended while the page was closed is settled exactly once
 if (pomo.state.isRunning) { startTicking(); checkPomodoro(); }
+// Same for the countdown: resume it, or settle one that ended while the page was closed
+renderCountdown();
+if (cd.isRunning) { cdTick = setInterval(checkCountdown, 250); checkCountdown(); }
 // Re-check every minute so the countdown flips right after midnight
 setInterval(render, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });

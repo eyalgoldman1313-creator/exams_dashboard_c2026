@@ -444,6 +444,30 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
   30% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--pc) 45%, transparent), var(--shadow); }
 }
 
+/* ---------- Countdown ("טיימר") — reuses the Pomodoro's building blocks ---------- */
+/* Its own accent (from the dashboard palette) so it doesn't take the Pomodoro's colour */
+.cd { --pc: #2f8cff; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 20px 22px; transition: box-shadow 0.3s; }
+.cd .panel-head { width: 100%; }
+.cd-body { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; }
+.cd-set { display: flex; flex-direction: column; gap: 6px; }
+.cd-set .task-num:disabled, .cd-set .step-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.cd-clock { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; }
+.cd-time {
+  direction: ltr; unicode-bidi: isolate;
+  font-size: clamp(3.4rem, 12vw, 5rem); font-weight: 800; line-height: 0.95; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt));
+  transition: opacity 0.35s;
+}
+.cd[data-state="paused"] .cd-time { opacity: 0.65; }
+.cd-progress { width: 100%; max-width: 320px; margin-top: 0; }
+.cd-progress i { width: var(--p, 0%); background: var(--pc); transition: width 0.3s linear; }
+.cd[data-ringing="true"] [data-cd-action="reset"] {
+  color: color-mix(in srgb, var(--pc), var(--ink-mix) var(--ink-amt));
+  border-color: color-mix(in srgb, var(--pc) 60%, var(--border));
+  animation: ringPulse 1.4s ease-out infinite;
+}
+
 /* ---------- Tasks ---------- */
 .tasks { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; }
 .task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -646,6 +670,11 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
   .pomo-controls .pomo-main { order: -1; flex: 1 1 100%; }
   .pomo-controls .pomo-ghost { flex: 1 1 0; }
   .tasks { padding-inline: 12px; }
+  .cd { padding: 14px 12px 20px; }
+  .cd-body { flex-direction: column; align-items: stretch; }
+  .cd-set { flex-direction: row; align-items: center; justify-content: space-between; }
+  .cd .pomo-controls .pomo-main { order: -1; flex: 1 1 100%; }
+  .cd .pomo-controls .pomo-ghost { flex: 1 1 0; }
   .task { padding: 10px; gap: 8px; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .card { padding: 14px 14px 12px; gap: 6px; }
