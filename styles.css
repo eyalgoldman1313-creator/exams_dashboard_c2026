@@ -449,7 +449,10 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
 .cd { --pc: #2f8cff; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 20px 22px; transition: box-shadow 0.3s; }
 .cd .panel-head { width: 100%; }
 .cd-body { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; }
+.cd-sets { display: flex; flex-direction: column; gap: 10px; }
 .cd-set { display: flex; flex-direction: column; gap: 6px; }
+.cd-set .task-num { width: 76px; }
+.cd-hint { font-size: 0.78rem; color: var(--muted); }
 .cd-set .task-num:disabled, .cd-set .step-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .cd-clock { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; }
 .cd-time {

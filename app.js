@@ -743,14 +743,25 @@ function timerPageHTML() {
         <span class="panel-note">ספירה לאחור</span>
       </div>
       <div class="cd-body">
-        <label class="cd-set">
-          <span class="stat-label">כמה דקות?</span>
-          <span class="stepper">
-            <input class="task-num" type="number" inputmode="numeric" min="${CD_LIMITS[0]}" max="${CD_LIMITS[1]}" step="1" data-cd-minutes aria-label="משך הטיימר בדקות">
-            <button type="button" class="step-btn" data-cd-step="1" aria-label="דקה נוספת">${ICONS.plus}</button>
-            <button type="button" class="step-btn" data-cd-step="-1" aria-label="דקה אחת פחות">${ICONS.minus}</button>
-          </span>
-        </label>
+        <div class="cd-sets">
+          <label class="cd-set">
+            <span class="stat-label">כמה דקות?</span>
+            <span class="stepper">
+              <input class="task-num" type="number" inputmode="decimal" min="${CD_LIMITS[0]}" max="${CD_LIMITS[1]}" step="any" data-cd-minutes aria-label="משך הטיימר בדקות">
+              <button type="button" class="step-btn" data-cd-step="1" aria-label="דקה נוספת">${ICONS.plus}</button>
+              <button type="button" class="step-btn" data-cd-step="-1" aria-label="דקה אחת פחות">${ICONS.minus}</button>
+            </span>
+          </label>
+          <label class="cd-set">
+            <span class="stat-label">כמה נקודות?</span>
+            <span class="stepper">
+              <input class="task-num" type="number" inputmode="decimal" min="${POINT_LIMITS[0]}" max="${POINT_LIMITS[1]}" step="any" data-cd-points aria-label="משך הטיימר בנקודות, כל נקודה 2.3 דקות">
+              <button type="button" class="step-btn" data-cd-pstep="1" aria-label="נקודה נוספת">${ICONS.plus}</button>
+              <button type="button" class="step-btn" data-cd-pstep="-1" aria-label="נקודה אחת פחות">${ICONS.minus}</button>
+            </span>
+          </label>
+          <p class="cd-hint">נקודה = 2.3 דקות (2:18)</p>
+        </div>
         <div class="cd-clock">
           <div class="cd-time" role="timer" aria-label="זמן שנותר בטיימר" data-cd-time>10:00</div>
           <span class="progress cd-progress" aria-hidden="true"><i data-cd-bar></i></span>
@@ -974,6 +985,13 @@ function focusTaskForm() {
 // A plain countdown above the Pomodoro. Own state, same endTime-based timing and the same alarm.
 const CD_KEY = 'countdown-state';
 const CD_LIMITS = [1, 600];
+const POINT_MS = 138000;   // one point = 138 s = 2.3 minutes
+const POINT_LIMITS = [0.5, Math.floor((CD_LIMITS[1] * 60000) / POINT_MS)];
+const round1 = (n) => Math.round(n * 10) / 10;
+const clampNum = (v, [min, max], def) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(max, Math.max(min, n)) : def;
+};
 let cd = null;
 let cdTick = null;
 
@@ -983,8 +1001,8 @@ const cdActive = () => cd.isRunning || cd.remainingMs < cd.durationMs;
 
 function loadCountdown() {
   const s = store.getJSON(CD_KEY, {});
-  const minutes = clampInt(s.minutes, CD_LIMITS, 10);
-  const durationMs = Number.isFinite(s.durationMs) && s.durationMs > 0 ? s.durationMs : minutes * 60000;
+  const minutes = clampNum(s.minutes, CD_LIMITS, 10);
+  const durationMs = Number.isFinite(s.durationMs) && s.durationMs > 0 ? s.durationMs : Math.round(minutes * 60000);
   const isRunning = s.isRunning === true && Number.isFinite(s.endTime);
   cd = {
     minutes, durationMs, isRunning,
@@ -994,14 +1012,18 @@ function loadCountdown() {
 }
 const saveCountdown = () => store.setJSON(CD_KEY, cd);
 
-function setCountdownMinutes(min) {
+function setCountdownDuration(ms) {
   if (cdActive()) return;   // the length is locked while a countdown is in progress
-  cd.minutes = clampInt(min, CD_LIMITS, cd.minutes);
-  cd.durationMs = cd.minutes * 60000;
+  cd.durationMs = Math.round(ms);
+  cd.minutes = round1(cd.durationMs / 60000);
   cd.remainingMs = cd.durationMs;
   saveCountdown();
   renderCountdown();
 }
+const setCountdownMinutes = (min) => setCountdownDuration(clampNum(min, CD_LIMITS, cd.minutes) * 60000);
+// Points convert exactly: 10 points = 23:00, 3 points = 6:54
+const setCountdownPoints = (pts) => setCountdownDuration(clampNum(pts, POINT_LIMITS, cdPoints()) * POINT_MS);
+const cdPoints = () => round1(cd.durationMs / POINT_MS);
 
 function startCountdown() {
   if (cd.isRunning) return;
@@ -1073,11 +1095,14 @@ function renderCountdown() {
   p.dataset.state = cd.isRunning ? 'running' : paused ? 'paused' : 'idle';
   p.dataset.ringing = String(isRinging);
 
-  const input = p.querySelector('[data-cd-minutes]');
-  if (document.activeElement !== input) input.value = cd.minutes;
   const locked = cdActive();
+  const input = p.querySelector('[data-cd-minutes]');
+  const pointsInput = p.querySelector('[data-cd-points]');
+  if (document.activeElement !== input) input.value = cd.minutes;
+  if (document.activeElement !== pointsInput) pointsInput.value = cdPoints();
   input.disabled = locked;
-  p.querySelectorAll('[data-cd-step]').forEach((b) => { b.disabled = locked; });
+  pointsInput.disabled = locked;
+  p.querySelectorAll('[data-cd-step], [data-cd-pstep]').forEach((b) => { b.disabled = locked; });
 
   const main = cd.isRunning ? ['pause', 'השהה'] : paused ? ['play', 'המשך'] : ['play', 'התחל'];
   const btn = p.querySelector('[data-cd-action="toggle"]');
@@ -1116,16 +1141,20 @@ timerView.addEventListener('click', (ev) => {
     if (act.dataset.cdAction === 'toggle') (cd.isRunning ? pauseCountdown : startCountdown)();
     else resetCountdown();
   }
-  if (step) setCountdownMinutes(cd.minutes + Number(step.dataset.cdStep));
+  if (step) setCountdownMinutes(Math.round(cd.minutes) + Number(step.dataset.cdStep));
+  const pstep = ev.target.closest('[data-cd-pstep]');
+  if (pstep) setCountdownPoints(Math.round(cdPoints()) + Number(pstep.dataset.cdPstep));
 });
 timerView.addEventListener('change', (ev) => {
   if (ev.target.matches('[data-cd-minutes]')) setCountdownMinutes(ev.target.value);
+  if (ev.target.matches('[data-cd-points]')) setCountdownPoints(ev.target.value);
 });
 timerView.addEventListener('keydown', (ev) => {
   // Enter in the minutes field starts the countdown
-  if (ev.key === 'Enter' && ev.target.matches('[data-cd-minutes]')) {
+  if (ev.key === 'Enter' && ev.target.matches('[data-cd-minutes], [data-cd-points]')) {
     ev.preventDefault();
-    setCountdownMinutes(ev.target.value);
+    if (ev.target.matches('[data-cd-points]')) setCountdownPoints(ev.target.value);
+    else setCountdownMinutes(ev.target.value);
     startCountdown();
   }
 });
