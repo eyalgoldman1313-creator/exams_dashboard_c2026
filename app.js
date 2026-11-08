@@ -118,6 +118,17 @@ function statsHTML(exams) {
       <span class="stat-val">${e.d >= 0 ? e.d : '✓'}<small> ${e.d >= 0 ? unit(e.d) : ''}</small></span>
       <span class="stat-foot">${fmtDate.format(toUTC(e.date))}</span>
     </div>`;
+  // The exam right after the one shown in the hero (within this moed)
+  const following = exams.filter((e) => e.d >= 0)[1];
+  const followingStat = `
+    <div class="stat">
+      <span class="stat-label">המבחן שאחריו</span>
+      <span class="stat-val">${following ? `${following.d}<small> ${unit(following.d)}</small>` : left ? '—' : '✓'}</span>
+      ${following
+        ? `<span class="stat-foot stat-name">${esc(following.name)}</span>
+      <span class="stat-foot">${fmtDate.format(toUTC(following.date))}</span>`
+        : `<span class="stat-foot">${left ? 'זה המבחן האחרון במועד' : 'המועד הסתיים'}</span>`}
+    </div>`;
   return `
     <section class="stats">
       <div class="stat">
@@ -125,7 +136,7 @@ function statsHTML(exams) {
         <span class="stat-val">${left}<small> / ${exams.length}</small></span>
         <span class="progress" style="--p:${pct}%"><i></i></span>
       </div>
-      ${stat('עד הראשון', exams[0])}
+      ${followingStat}
       ${stat('עד האחרון', exams.at(-1))}
     </section>`;
 }
