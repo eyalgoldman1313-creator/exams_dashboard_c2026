@@ -114,9 +114,9 @@ function statsHTML(exams) {
   const pct = Math.round(((exams.length - left) / exams.length) * 100);
   const stat = (label, e) => `
     <div class="stat">
-      <span class="stat-label">${label}</span>
+      <span class="stat-label">${label} (${esc(e.short)})</span>
       <span class="stat-val">${e.d >= 0 ? e.d : '✓'}<small> ${e.d >= 0 ? unit(e.d) : ''}</small></span>
-      <span class="stat-foot">${fmtDate.format(toUTC(e.date))}</span>
+      <span class="stat-foot">${fmtWeekdayShort.format(toUTC(e.date))}, ${fmtShortDate.format(toUTC(e.date))}</span>
     </div>`;
   // The exam right after the one shown in the hero (within this moed)
   const following = exams.filter((e) => e.d >= 0)[1];
