@@ -643,7 +643,8 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.4rem); font-weight: 800; letter-spacing: -0
   .stat-val small { font-size: 0.75rem; }
   .stat-foot { font-size: 0.72rem; }
   .pill.stat-date { padding: 3px 6px; font-size: 0.78rem; }
-  .board > .stats { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); }
+  .board > .stats { grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.1fr) minmax(0, 1.1fr); }
+  .board > .stats .stat { padding-inline: 8px; }
   .panel { padding: 14px 12px 10px; }
   .board { gap: 16px; }
   .board-tab { padding: 8px 6px; }
