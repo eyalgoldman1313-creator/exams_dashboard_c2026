@@ -114,7 +114,7 @@ function statsHTML(exams) {
   const pct = Math.round(((exams.length - left) / exams.length) * 100);
   const stat = (label, e) => `
     <div class="stat">
-      <span class="stat-label">${label} (${esc(e.short)})</span>
+      <span class="stat-label">${label} <span class="stat-name">(${esc(e.short)})</span></span>
       <span class="stat-val">${e.d >= 0 ? e.d : '✓'}<small> ${e.d >= 0 ? unit(e.d) : ''}</small></span>
       <span class="pill stat-date" style="--c:${e.color}">${fmtWeekdayShort.format(toUTC(e.date))}, ${fmtShortDate.format(toUTC(e.date))}</span>
     </div>`;
