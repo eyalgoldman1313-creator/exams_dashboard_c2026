@@ -122,10 +122,10 @@ function statsHTML(exams) {
   const following = exams.filter((e) => e.d >= 0)[1];
   const followingStat = `
     <div class="stat">
-      <span class="stat-label">המבחן שאחריו</span>
+      <span class="stat-label${following ? ' stat-name' : ''}">${following ? esc(following.name) : 'המבחן שאחריו'}</span>
       <span class="stat-val">${following ? `${following.d}<small> ${unit(following.d)}</small>` : left ? '—' : '✓'}</span>
       ${following
-        ? `<span class="stat-foot stat-name">${esc(following.name)}</span>
+        ? `<span class="stat-foot">המבחן שאחריו</span>
       <span class="stat-foot">${fmtDate.format(toUTC(following.date))}</span>`
         : `<span class="stat-foot">${left ? 'זה המבחן האחרון במועד' : 'המועד הסתיים'}</span>`}
     </div>`;
